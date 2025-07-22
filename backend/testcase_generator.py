@@ -4,7 +4,7 @@ import os
 from typing import Dict
 
 class TestCaseGenerator:
-    def __init__(self, output_dir="data/outputs"):
+    def __init__(self, output_dir="E:/sm-ai-testcase/data/outputs"):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
     

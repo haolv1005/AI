@@ -7,13 +7,17 @@ from langchain_core.documents import Document
 from typing import List  # 添加导入
 
 class KnowledgeBase:
-    KB_FILES_DIR = "data/knowledge_base/files"
+    #KB_FILES_DIR = "data/knowledge_base/files"
     
-    def __init__(self, kb_dir="data/knowledge_base"):
+    def __init__(self, kb_dir="E:/sm-ai-testcase/data/knowledge_base"):
         self.kb_dir = os.path.normpath(kb_dir)
+        self.KB_FILES_DIR = os.path.join(self.kb_dir, "files")
         self.index_path = os.path.join(self.kb_dir, "faiss_index")
+        
+        # 确保目录存在
         os.makedirs(self.KB_FILES_DIR, exist_ok=True)
         os.makedirs(self.kb_dir, exist_ok=True)
+        os.makedirs(self.index_path, exist_ok=True)
         
         self._embeddings = HuggingFaceEmbeddings(
             model_name="shibing624/text2vec-base-chinese"
