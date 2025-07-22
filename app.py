@@ -42,17 +42,33 @@ if 'initialized' not in st.session_state:
         
         # 其他组件初始化
         st.session_state.kb = KnowledgeBase()
-        st.session_state.ai_client = AIClient(knowledge_base=st.session_state.kb)
+        #st.session_state.ai_client = AIClient(knowledge_base=st.session_state.kb)
         st.session_state.testcase_gen = TestCaseGenerator()
-        st.session_state.document_processor = DocumentProcessor()
+        #st.session_state.document_processor = DocumentProcessor()
+        st.session_state.ai_client = AIClient()
         
+        st.session_state.document_processor = DocumentProcessor()
+        st.session_state.kb = None
         st.session_state.initialized = True
         st.toast("系统初始化完成", icon="✅")
     except Exception as e:
         st.error(f"初始化失败: {str(e)}")
         st.error("请检查配置文件或依赖项安装情况")
         st.stop()
-
+if st.session_state.kb is None:
+    try:
+        st.session_state.kb = KnowledgeBase()
+        
+        # 检查知识库是否初始化成功
+        if st.session_state.kb._vectorstore is None:
+            st.error("知识库初始化失败！请检查依赖项和文件权限")
+            st.stop()
+        else:
+            st.toast("知识库初始化成功", icon="✅")
+    except Exception as e:
+        st.error(f"知识库初始化失败: {str(e)}")
+        st.error("请确保已安装必要的依赖项：pip install faiss-cpu langchain")
+        st.stop()
 # 侧边栏导航
 st.sidebar.title("导航")
 page = st.sidebar.radio("选择页面", ["生成测试用例", "历史记录", "知识库管理"])
@@ -222,10 +238,13 @@ elif page == "知识库管理":
                 st.session_state.kb.add_document(file_path)
                 st.session_state.db.add_knowledge_file(knowledge_file.name, file_path)
                 st.success("文件已成功添加到知识库")
+                #st.experimental_rerun()
             except Exception as e:
                 error_msg = f"添加文件到知识库失败: {str(e)}"
                 st.error(error_msg)
-    
+                with st.expander("查看错误详情"):
+                    import traceback
+                    st.text(traceback.format_exc())
     # 显示知识库文件列表
     st.subheader("知识库文件列表")
     if "knowledge_files" not in st.session_state:

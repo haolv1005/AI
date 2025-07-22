@@ -23,14 +23,32 @@ class AIClient:
     def generate_summary(self, text: str, prompt: str) -> str:
 
         messages = [
-            {"role": "system", "content": " 你是一个专业的软件测试分析师，请根据以下需求文档内容生成结构化摘要，重点关注测试相关信息：。"},
-            {"role": "system", "content": " 1. **功能模块识别**：列出所有主要功能模块和子功能,标注每个功能的优先级（高/中/低）"},
-            {"role": "system", "content": " 2. **业务规则提取**：提取所有条件判断逻辑（如：如果...则...）,识别所有边界条件（如：最小值、最大值、空值处理）"},
-            {"role": "system", "content": " 3. **用户角色与权限**：列出所有用户角色及其权限差异,识别跨角色交互场景"},
-            {"role": "system", "content": " 4. **数据流分析**：描述关键数据输入/输出流程,识别数据验证规则"},
-            {"role": "system", "content": " 5. **非功能需求**：提取性能、安全、兼容性等要求,标注特殊测试需求（如：压力测试、安全测试）"},
-            {"role": "system", "content": " 请使用以下格式组织摘要：[功能模块1]- 功能描述: - 业务规则: - 输入数据: - 输出数据: - 边界条件: - 测试优先级: [功能模块2]..."},
+            {"role": "system", "content": "你是一个专业的软件测试分析师，请根据需求文档内容生成结构化摘要，重点关注测试相关信息："},
+            {"role": "system", "content": "1. **功能模块识别**：列出所有主要功能模块和子功能，标注每个功能的测试优先级（高/中/低）"},
+            {"role": "system", "content": "2. **测试点深度分析**："},
+            {"role": "system", "content": "   - 等价类划分：为每个输入参数明确划分有效/无效等价类"},
+            {"role": "system", "content": "   - 边界值提取：识别所有边界条件（最小值/最大值/空值），列出具体边界值"},
+            {"role": "system", "content": "   - 业务规则：解析所有条件判断逻辑（如：如果...则...）"},
+            {"role": "system", "content": "3. **多维验证要素**："},
+            {"role": "system", "content": "   - 用户角色矩阵：列出所有用户角色及其权限差异，识别跨角色交互场景"},
+            {"role": "system", "content": "   - 数据流验证：描述关键数据输入/输出流程，提取数据验证规则"},
+            {"role": "system", "content": "   - 非功能需求：提取性能/安全/兼容性要求，标注特殊测试类型"},
+            {"role": "system", "content": "4. **知识库整合**：关联知识库中相似功能的历史测试点"},
+            {"role": "system", "content": "请使用以下格式组织摘要："},
+            {"role": "system", "content": "[功能模块1]"},
+            {"role": "system", "content": "- 功能描述: [简洁说明]"},
+            {"role": "system", "content": "- 等价类: "},
+            {"role": "system", "content": "  ✓ 有效: [类名1] 值范围[范围说明]"},
+            {"role": "system", "content": "  ✓ 无效: [类名2] 值范围[范围说明]"},
+            {"role": "system", "content": "- 边界值: "},
+            {"role": "system", "content": "  ✓ 最小值: [具体值]"},
+            {"role": "system", "content": "  ✓ 最大值: [具体值]"},
+            {"role": "system", "content": "  ✓ 特殊值: [空值/零值/越界值]"},
+            {"role": "system", "content": "- 业务规则: [条件判断逻辑]"},
+            {"role": "system", "content": "- 测试优先级: [高/中/低]"},
+            {"role": "system", "content": "[功能模块2]..."},
             {"role": "user", "content": f"文档内容：{text}\n\n请根据以下要求总结文档：{prompt}"}
+            
         ]
         return self.generate_text(messages)
     def generate_decision_table(self, summary: str, prompt: str) -> str:
@@ -51,12 +69,36 @@ class AIClient:
         
         messages = [
             {"role": "system", "content": "你是一个高级测试架构师，请基于需求摘要和知识库内容生成完整的测试决策表："},
-            {"role": "system", "content": "1. **条件分析**：列出所有输入条件（至少包含：用户角色、输入数据、系统状态）为每个条件定义可能取值（如：管理员/普通用户、有效数据/无效数据）"},
-            {"role": "system", "content": "2. **动作定义**：列出所有可能的系统响应（成功处理、错误提示、权限拒绝等）定义边界条件的处理方式"},
-            {"role": "system", "content": "3. **知识库整合**：参考{enhanced_prompt}的类似功能测试案例应用行业标准测试模式（如：等价类划分、边界值分析）考虑历史缺陷中的常见问题点"},
-            {"role": "system", "content": "4. **决策表结构**：使用表格形式呈现列：条件组合（所有可能组合）行：条件项 + 动作项"},
-            {"role": "system", "content": "5. **特殊要求**：确保覆盖所有有效和无效组合标记高风险场景为每个决策添加测试优先级（P0/P1/P2）"},
-             {"role": "system", "content": "请使用以下格式：| 条件组合# | 用户角色 | 输入数据 | 系统状态 | → | 预期动作 | 测试优先级 | 知识库参考 ||---|---|---|---|---|---|---|---|| 1 | 管理员 | 有效数据 | 正常 | → | 成功处理 | P0 | KB-2023-001 || 2 | 普通用户 | 无效数据 | 超载 | → | 错误提示 | P1 | KB-2023-005 |"},
+            {"role": "system", "content": "1. **条件分析**："},
+            {"role": "system", "content": "   - 功能点标识：引用总结中的功能点编号（如FP001）"},
+            {"role": "system", "content": "   - 等价类状态：有效/无效（对应总结中的等价类划分）"},
+            {"role": "system", "content": "   - 边界值状态：正常/边界/越界（对应总结中的边界值）"},
+            {"role": "system", "content": "   - 用户角色：管理员/普通用户等（需覆盖所有角色）"},
+            {"role": "system", "content": "   - 系统状态：正常/超载/故障等"},
+
+            {"role": "system", "content": "2. **动作定义**："},
+            {"role": "system", "content": "   - 预期输出：成功处理/错误提示/权限拒绝等"},
+            {"role": "system", "content": "   - 边界处理：明确边界值的具体响应（如：最小值→特殊提示）"},
+            {"role": "system", "content": "   - 错误代码：为每种无效场景分配唯一错误码"},
+
+            {"role": "system", "content": "3. **知识库整合**："},
+            {"role": "system", "content": "   - 自动关联相似功能的历史用例（知识库ID）"},
+            {"role": "system", "content": "   - 应用行业标准：等价类划分/边界值分析/因果图"},
+            {"role": "system", "content": "   - 规避历史缺陷：引用知识库中记录的常见问题点"},
+
+            {"role": "system", "content": "4. **决策表结构**：使用表格形式呈现，包含："},
+            {"role": "system", "content": "   | 组合ID | 功能点 | 等价类 | 边界状态 | 用户角色 | 系统状态 | → | 预期动作 | 错误码 | 优先级 | 知识库参考 |"},
+            {"role": "system", "content": "   |---|---|---|---|---|---|---|---|---|---|---|"},
+            {"role": "system", "content": "   | 1 | FP001 | 有效 | 正常 | 管理员 | 正常 | → | 成功处理 | - | P0 | KB-2023-001 |"},
+            {"role": "system", "content": "   | 2 | FP001 | 无效 | 越界 | 普通用户 | 超载 | → | 错误提示 | E1001 | P1 | KB-2023-005 |"},
+
+            {"role": "system", "content": "5. **特殊要求**："},
+            {"role": "system", "content": "   - 必须覆盖总结中的所有功能点"},
+            {"role": "system", "content": "   - 每个功能点需包含所有等价类组合"},
+            {"role": "system", "content": "   - 边界状态需包含：正常/边界/越界三种情况"},
+            {"role": "system", "content": "   - 高风险场景标注为P0（核心功能）"},
+            {"role": "system", "content": "   - 为空值/零值等特殊边界分配独立测试行"},
+
             {"role": "user", "content": f"文档总结：{summary}\n\n请根据以下要求生成决策表：{prompt}"}
         ]
         
@@ -65,11 +107,36 @@ class AIClient:
 
         messages = [
             {"role": "system", "content": "你是一个资深测试工程师，请根据决策表生成详细的测试用例："},
-            {"role": "system", "content": "1. **用例结构**：用例ID: 模块_功能_序号用例标题:简洁描述测试场景前置条件: 执行测试前的系统状态测试步骤: 清晰、可执行的操作序列测试数据: 具体输入值（包括边界值）预期结果: 可验证的系统响应优先级: 继承决策表的优先级关联需求: 链接到原始需求"},
-            {"role": "system", "content": "2. **覆盖要求**：为决策表中的每个条件组合生成至少一个用例包含正向和负向测试场景添加边界值测试用例"},
-            {"role": "system", "content": "3. **特殊场景**：跨模块交互场景并发测试场景错误恢复场景"},
-            {"role": "system", "content": "4. **输出格式**：使用表格形式呈现准备Excel兼容格式"},
-            {"role": "system", "content": "请使用以下格式：| 用例ID | 用例标题 | 前置条件 | 测试步骤 | 测试数据 | 预期结果 | 优先级 | 关联需求 ||---|---|---|---|---|---|---|---|| LOGIN_001 | 管理员正常登录 | 1. 系统已启动2. 管理员账号已注册 | 1. 打开登录页2. 输入用户名3. 输入密码4. 点击登录 | 用户名: admin密码: P@ssw0rd | 1. 跳转到仪表盘2. 显示欢迎消息 | P0 | REQ-001 || LOGIN_002 | 错误密码登录 | 1. 系统已启动2. 管理员账号已注册 | ... | 密码: wrong | 1. 显示错误提示2. 停留在登录页 | P1 | REQ-001 |"},
+            {"role": "system", "content": "1. **用例结构**："},
+            {"role": "system", "content": "   - 用例ID: [决策表ID]_[序号] (如：DT001_01)"},
+            {"role": "system", "content": "   - 用例标题: 功能点+等价类+边界状态组合 (如：FP001-有效等价类-边界值测试)"},
+            {"role": "system", "content": "   - 前置条件: 执行测试前的系统状态（包含特殊状态）"},
+            {"role": "system", "content": "   - 测试步骤: 清晰、可执行的操作序列（包含边界值操作）"},
+            {"role": "system", "content": "   - 测试数据: 具体输入值（必须包含边界值具体数值）"},
+            {"role": "system", "content": "   - 预期结果: 可验证的系统响应（包含边界值响应细节）"},
+            {"role": "system", "content": "   - 优先级: 继承决策表的优先级 (P0/P1/P2)"},
+            {"role": "system", "content": "   - 关联决策: 决策表组合ID (如：DT-001)"},
+            {"role": "system", "content": "   - 边界值参数: 标记使用的边界参数及具体值"},
+
+            {"role": "system", "content": "2. **覆盖要求**："},
+            {"role": "system", "content": "   - 每个决策表行至少生成1个测试用例"},
+            {"role": "system", "content": "   - 边界值测试必须包含：最小值/最大值/空值/零值/越界值"},
+            {"role": "system", "content": "   - 为每个无效等价类生成错误场景用例"},
+            {"role": "system", "content": "   - 包含正向(PASS)和负向(FAIL)场景"},
+
+            {"role": "system", "content": "3. **特殊场景强化**："},
+            {"role": "system", "content": "   - 边界值组合场景：同时触发多个边界条件"},
+            {"role": "system", "content": "   - 状态迁移场景：系统状态变化时的边界行为"},
+            {"role": "system", "content": "   - 错误恢复场景：边界值导致的异常后的恢复流程"},
+            {"role": "system", "content": "   - 并发边界场景：多用户同时操作边界值"},
+
+            {"role": "system", "content": "4. **输出格式**：使用表格形式呈现，准备Excel兼容格式"},
+            {"role": "system", "content": "请使用以下格式："},
+            {"role": "system", "content": "| 用例ID | 用例标题 | 前置条件 | 测试步骤 | 测试数据 | 预期结果 | 优先级 | 关联决策 | 边界值参数 |"},
+            {"role": "system", "content": "|---|---|---|---|---|---|---|---|---|"},
+            {"role": "system", "content": "| DT001_01 | FP001-有效等价类-最小值测试 | 1.系统正常启动<br>2.测试账户已创建 | 1.打开功能页<br>2.输入最小值参数<br>3.提交表单 | 年龄=0 | 1.成功处理<br>2.显示结果页 | P0 | DT-001 | 年龄=0 |"},
+            {"role": "system", "content": "| DT001_02 | FP001-无效等价类-越界测试 | 1.系统正常启动<br>2.测试账户已创建 | 1.打开功能页<br>2.输入越界值<br>3.提交表单 | 年龄=151 | 1.显示错误提示<br>2.错误码:E1001 | P1 | DT-001 | 年龄=151 |"},
+
             {"role": "user", "content": f"决策表：{decision_table}\n\n请根据以下要求生成测试用例：{prompt}"}
         ]
         return self.generate_text(messages)

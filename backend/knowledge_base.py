@@ -18,19 +18,43 @@ class KnowledgeBase:
         self._embeddings = HuggingFaceEmbeddings(
             model_name="shibing624/text2vec-base-chinese"
         )
-        self._vectorstore = self._init_vectorstore()
+        self._vectorstore = None
+        self._init_vectorstore()
     
     def _init_vectorstore(self):
         try:
-            if os.path.exists(os.path.join(self.index_path, "index.faiss")):
-                return FAISS.load_local(self.index_path, self._embeddings)
-            return FAISS.from_documents(
-                [Document(page_content="初始化")], self._embeddings
+            index_file = os.path.join(self.index_path, "index.faiss")
+            # 检查索引文件是否存在
+            if os.path.exists(index_file):
+            # 添加 allow_dangerous_deserialization=True
+                self._vectorstore = FAISS.load_local(
+                    self.index_path, 
+                    self._embeddings,
+                    allow_dangerous_deserialization=True
             )
-        except Exception:
-            return FAISS.from_documents(
-                [Document(page_content="初始化")], self._embeddings
+                print("成功加载现有知识库索引")
+            else:
+            # 创建新的向量库
+                self._vectorstore = FAISS.from_documents(
+                    [Document(page_content="初始化知识库")], 
+                    self._embeddings
             )
+            # 保存初始索引
+            self._vectorstore.save_local(self.index_path)
+            print("创建新的知识库索引")
+        except Exception as e:
+            print(f"初始化向量库失败: {str(e)}")
+        # 尝试创建新的向量库
+            try:
+                print("尝试创建新的知识库索引作为回退")
+                self._vectorstore = FAISS.from_documents(
+                    [Document(page_content="初始化知识库")], 
+                    self._embeddings
+            )
+                self._vectorstore.save_local(self.index_path)
+            except Exception as e2:
+                print(f"创建新向量库失败: {str(e2)}")
+                self._vectorstore = None
     
     def _excel_to_text(self, file_path):
         excel_data = pd.read_excel(file_path, sheet_name=None)
@@ -56,11 +80,16 @@ class KnowledgeBase:
     
     def add_document(self, file_path):
         """添加文档到知识库并保存到固定位置"""
+        if self._vectorstore is None:
+            self._init_vectorstore()  # 重新尝试初始化
+        if self._vectorstore is None:
+            raise RuntimeError("无法初始化向量库，请检查系统配置")
         filename = os.path.basename(file_path)
         kb_file_path = os.path.join(self.KB_FILES_DIR, filename)
         
         # 保存到知识库专属目录
         if not os.path.exists(kb_file_path):
+            os.makedirs(os.path.dirname(kb_file_path), exist_ok=True)
             with open(file_path, 'rb') as src, open(kb_file_path, 'wb') as dest:
                 dest.write(src.read())
         
@@ -76,10 +105,21 @@ class KnowledgeBase:
             documents = [Document(page_content="文件内容", metadata={"source": filename})]
         
         # 更新向量库
-        new_vs = FAISS.from_documents(documents, self._embeddings)
-        self._vectorstore.merge_from(new_vs)
-        self._vectorstore.save_local(self.index_path)
-        return True
+        try:
+            new_vs = FAISS.from_documents(documents, self._embeddings)
+            if self._vectorstore:
+                self._vectorstore.merge_from(new_vs)
+            else:
+                self._vectorstore = new_vs  # 如果向量库仍为空，则使用新的
+        
+            self._vectorstore.save_local(self.index_path)
+            return True
+        except Exception as e:
+            error_msg = f"添加文件到知识库失败: {str(e)}"
+            # 打印完整错误信息到控制台
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(error_msg)
     
     def search(self, query, k=3, full_content=False):
         if not self._vectorstore:
