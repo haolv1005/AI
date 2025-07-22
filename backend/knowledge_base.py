@@ -9,7 +9,7 @@ from typing import List  # 添加导入
 class KnowledgeBase:
     #KB_FILES_DIR = "data/knowledge_base/files"
     
-    def __init__(self, kb_dir="E:/sm-ai-testcase/data/knowledge_base"):
+    def __init__(self, kb_dir="E:/sm-ai/data/knowledge_base"):
         self.kb_dir = os.path.normpath(kb_dir)
         self.KB_FILES_DIR = os.path.join(self.kb_dir, "files")
         self.index_path = os.path.join(self.kb_dir, "faiss_index")

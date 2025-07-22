@@ -7,7 +7,7 @@ from pathlib import Path
 thread_local = threading.local()
 
 class Database:
-    def __init__(self, db_path="E:/sm-ai-testcase/data/testcase.db"):
+    def __init__(self, db_path="E:/sm-ai/data/testcase.db"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._create_tables()

@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 # 设置基础路径
-BASE_DIR = "E:/sm-ai-testcase"
+BASE_DIR = "E:/sm-ai"
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
 # 创建所需目录
