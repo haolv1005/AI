@@ -2,8 +2,10 @@
 import sqlite3
 import os
 import threading
+import traceback
 from pathlib import Path
-
+from typing import List
+from typing import List, Tuple, Dict, Union
 thread_local = threading.local()
 
 class Database:
@@ -25,40 +27,6 @@ class Database:
         
         # 创建记录表（如果不存在）
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                original_filename TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                output_filename TEXT NOT NULL,
-                output_path TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # 定义要添加的列
-        columns_to_add = [
-            ('summary', 'TEXT'),
-            ('requirement_analysis', 'TEXT'),
-            ('decision_table', 'TEXT'),
-            ('test_cases', 'TEXT'),
-            ('test_validation', 'TEXT')
-        ]
-        
-        # 获取现有的列
-        cursor.execute("PRAGMA table_info(records)")
-        existing_columns = [column[1] for column in cursor.fetchall()]
-        
-        # 添加缺失的列
-        for column, column_type in columns_to_add:
-            if column not in existing_columns:
-                try:
-                    cursor.execute(f"ALTER TABLE records ADD COLUMN {column} {column_type}")
-                    print(f"添加了新列: {column}")
-                except Exception as e:
-                    print(f"添加列 {column} 失败: {str(e)}")
-        
-        # 创建知识文件表
-        cursor.execute('''
             CREATE TABLE IF NOT EXISTS knowledge_files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT NOT NULL,
@@ -66,8 +34,11 @@ class Database:
                 uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        
         conn.commit()
+        
+        
+        # 定义要添加的列
+        
     
     def add_record(self, original_filename, file_path, output_filename, output_path, 
                    summary=None, requirement_analysis=None, decision_table=None, 
@@ -102,16 +73,193 @@ class Database:
         """添加知识文件记录"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO knowledge_files (filename, file_path)
-            VALUES (?, ?)
-        ''', (filename, file_path))
-        conn.commit()
-        return cursor.lastrowid
+        
+        try:
+            # 检查文件是否已存在
+            cursor.execute("SELECT id FROM knowledge_files WHERE file_path = ?", (file_path,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                print(f"文件已存在，跳过添加: {file_path}")
+                return True
+            
+            # 添加新记录
+            cursor.execute('''
+                INSERT INTO knowledge_files (filename, file_path)
+                VALUES (?, ?)
+            ''', (filename, file_path))
+            conn.commit()
+            print(f"成功添加知识文件记录: {filename} -> {file_path}")
+            return True
+        except Exception as e:
+            print(f"添加知识文件记录失败: {str(e)}")
+            print(traceback.format_exc())
+            return False
     
-    def get_knowledge_files(self):
+    def get_knowledge_documents(self) -> List[Dict]:
+        """获取知识库文档列表，添加详细日志"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT * FROM knowledge_files ORDER BY uploaded_at DESC')
+            records = []
+            
+            for row in cursor.fetchall():
+                record = dict(row)
+                record['exists'] = os.path.exists(record['file_path'])
+                records.append(record)
+            
+            print(f"从数据库获取到 {len(records)} 条知识文件记录")
+            return records
+        except Exception as e:
+            print(f"获取知识库文档失败: {str(e)}")
+            print(traceback.format_exc())
+            return []
+    
+    def get_knowledge_documents(self) -> List[Dict]:
+        """获取知识库文档列表，添加详细日志"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT * FROM knowledge_files ORDER BY uploaded_at DESC')
+            records = []
+            
+            for row in cursor.fetchall():
+                record = dict(row)
+                record['exists'] = os.path.exists(record['file_path'])
+                records.append(record)
+            
+            print(f"从数据库获取到 {len(records)} 条知识文件记录")
+            return records
+        except Exception as e:
+            print(f"获取知识库文档失败: {str(e)}")
+            print(traceback.format_exc())
+            return []
+    
+
         """获取所有知识文件记录"""
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM knowledge_files ORDER BY uploaded_at DESC')
         return [dict(row) for row in cursor.fetchall()]
+    # 在Database类中添加新方法
+    # 在Database类中添加新方法
+    def get_knowledge_documents(self) -> List[Dict]:
+        """获取知识库文档列表"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        # 获取所有知识文件
+        cursor.execute('SELECT * FROM knowledge_files ORDER BY uploaded_at DESC')
+        records = []
+        
+        # 为每个文件添加文档计数
+        for row in cursor.fetchall():
+            record = dict(row)
+            record['exists'] = os.path.exists(record['file_path'])
+            records.append(record)
+    
+        return records
+        
+        
+
+    def get_vector_documents(self) -> List[Dict]:
+        """获取所有向量文档及关联文件信息"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT vd.id, vd.content, vd.metadata, 
+                kf.filename, kf.file_path, kf.uploaded_at
+            FROM vector_documents vd
+            JOIN knowledge_files kf ON vd.file_id = kf.id
+            ORDER BY kf.uploaded_at DESC
+        ''')
+        return [dict(row) for row in cursor.fetchall()]
+    # 在Database类中添加删除方法
+    def delete_knowledge_file(self, file_id: int):
+        """删除知识库文件记录"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        # 先获取文件路径
+        cursor.execute("SELECT file_path FROM knowledge_files WHERE id = ?", (file_id,))
+        result = cursor.fetchone()
+        if not result:
+            return False
+        file_path = result[0]
+        
+        # 删除记录
+        cursor.execute("DELETE FROM knowledge_files WHERE id = ?", (file_id,))
+        
+        conn.commit()
+        
+        # 尝试删除物理文件
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"删除物理文件失败: {str(e)}")
+        
+        return True
+    def enhanced_search(self, query: str) -> List[Tuple[str, Dict]]:
+        """更强大的增强型搜索，优化短查询处理"""
+        if not self.knowledge_base:
+            return []
+        
+        try:
+            # 1. 扩展短查询（少于3个字符）
+            expanded_query = self.expand_short_query(query) if len(query) < 3 else query
+            
+            # 2. 向量相似度搜索
+            results = self.knowledge_base.search(expanded_query, k=10)
+            
+            if not results:
+                return []
+                
+            # 3. AI重新排序结果
+            return self.rerank_results(query, results)
+        
+        except Exception as e:
+            print(f"AI增强搜索失败: {str(e)}")
+            return []
+
+    def expand_short_query(self, query: str) -> str:
+        """扩展短查询，增加上下文"""
+        prompt = f"""
+        用户输入了一个简短的查询词: "{query}"
+        
+        请扩展这个查询，添加相关上下文和同义词，使其更适合知识库搜索。
+        
+        输出格式: 扩展后的查询
+        """
+        
+        try:
+            return self.generate_text([{"role": "user", "content": prompt}])
+        except:
+            return query  # 出错时返回原查询
+
+    def rerank_results(self, query: str, results: List[Tuple[str, Dict]]) -> List[Tuple[str, Dict]]:
+        """AI重新排序搜索结果"""
+        # 创建带上下文的提示
+        context = "\n\n".join([f"结果 {i+1}:\n{content[:500]}" 
+                            for i, (content, metadata) in enumerate(results)])
+        
+        rerank_prompt = f"""
+    根据用户原始查询和搜索结果，选择最相关的5个结果:
+
+    原始查询: {query}
+
+    搜索结果:
+    {context}
+
+    请按相关性从高到低输出文档编号(1-{len(results)})
+    """
+        
+        # 获取AI重新排序的结果
+        rerank_response = self.generate_text([{"role": "user", "content": rerank_prompt}])
+        selected_indices = self._parse_rerank_response(rerank_response, 5, len(results))
+        
+        # 返回精选结果
+        return [results[i] for i in selected_indices]

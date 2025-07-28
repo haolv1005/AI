@@ -1,14 +1,15 @@
 # backend/knowledge_base.py
 import os
 import pandas as pd
+import numpy as np
+import traceback  # 添加这一行以导入 traceback 模块
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
-from typing import List  # 添加导入
-
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from typing import List, Tuple, Dict, Union
+from .database import Database
 class KnowledgeBase:
-    #KB_FILES_DIR = "data/knowledge_base/files"
-    
     def __init__(self, kb_dir="E:/sm-ai/data/knowledge_base"):
         self.kb_dir = os.path.normpath(kb_dir)
         self.KB_FILES_DIR = os.path.join(self.kb_dir, "files")
@@ -25,114 +26,234 @@ class KnowledgeBase:
         self._vectorstore = None
         self._init_vectorstore()
     
+    # 修改后的 _init_vectorstore 方法
     def _init_vectorstore(self):
+        # 修改初始化逻辑，确保正确加载索引
         try:
             index_file = os.path.join(self.index_path, "index.faiss")
-            # 检查索引文件是否存在
             if os.path.exists(index_file):
-            # 添加 allow_dangerous_deserialization=True
                 self._vectorstore = FAISS.load_local(
                     self.index_path, 
                     self._embeddings,
                     allow_dangerous_deserialization=True
-            )
-                print("成功加载现有知识库索引")
+                )
+                print(f"成功加载知识库索引，包含 {len(self._vectorstore.index_to_docstore_id)} 个文档块")
             else:
-            # 创建新的向量库
-                self._vectorstore = FAISS.from_documents(
-                    [Document(page_content="初始化知识库")], 
-                    self._embeddings
-            )
-            # 保存初始索引
-            self._vectorstore.save_local(self.index_path)
-            print("创建新的知识库索引")
+                # 初始化为空索引
+                self._vectorstore = FAISS.from_documents([], self._embeddings)
+                # self._vectorstore.save_local(self.index_path)
+                print("创建新的空知识库索引")
         except Exception as e:
             print(f"初始化向量库失败: {str(e)}")
-        # 尝试创建新的向量库
-            try:
-                print("尝试创建新的知识库索引作为回退")
-                self._vectorstore = FAISS.from_documents(
-                    [Document(page_content="初始化知识库")], 
-                    self._embeddings
-            )
-                self._vectorstore.save_local(self.index_path)
-            except Exception as e2:
-                print(f"创建新向量库失败: {str(e2)}")
-                self._vectorstore = None
-    
-    def _excel_to_text(self, file_path):
-        excel_data = pd.read_excel(file_path, sheet_name=None)
-        documents = []
-        
-        for sheet_name, df in excel_data.items():
-            # 优化表格转换格式
-            content = f"<表格: {sheet_name}>\n"
-            content += f"<列名>: {', '.join(df.columns.astype(str))}\n"
-            content += f"<示例数据>: \n"
-            
-            for idx, row in df.head(3).iterrows():
-                row_data = ", ".join(f"{col}:{val}" for col, val in zip(df.columns, row.values))
-                content += f"- 行{idx+1}: {row_data}\n"
-            
-            # 添加结构化标记
-            content += "<表格结束>"
-            documents.append(Document(
-                page_content=content, 
-                metadata={"source": os.path.basename(file_path)}
-            ))
-        return documents
-    
-    def add_document(self, file_path):
-        """添加文档到知识库并保存到固定位置"""
-        if self._vectorstore is None:
-            self._init_vectorstore()  # 重新尝试初始化
-        if self._vectorstore is None:
-            raise RuntimeError("无法初始化向量库，请检查系统配置")
-        filename = os.path.basename(file_path)
-        kb_file_path = os.path.join(self.KB_FILES_DIR, filename)
-        
-        # 保存到知识库专属目录
-        if not os.path.exists(kb_file_path):
-            os.makedirs(os.path.dirname(kb_file_path), exist_ok=True)
-            with open(file_path, 'rb') as src, open(kb_file_path, 'wb') as dest:
-                dest.write(src.read())
-        
-        # 根据文件类型处理内容
-        ext = os.path.splitext(kb_file_path)[1].lower()
-        if ext in ['.xlsx', '.xls']:
-            documents = self._excel_to_text(kb_file_path)
-        elif ext == '.csv':
-            # CSV处理逻辑（简化）
-            documents = [Document(page_content="CSV内容", metadata={"source": filename})]
-        else:
-            # 其他文件类型处理
-            documents = [Document(page_content="文件内容", metadata={"source": filename})]
-        
-        # 更新向量库
+            self._vectorstore = FAISS.from_documents([], self._embeddings)
+
+    def _excel_to_text(self, file_path: str) -> List[Document]:
+        """专门处理包含固定列名的Excel文件"""
         try:
-            new_vs = FAISS.from_documents(documents, self._embeddings)
-            if self._vectorstore:
-                self._vectorstore.merge_from(new_vs)
-            else:
-                self._vectorstore = new_vs  # 如果向量库仍为空，则使用新的
+            excel_data = pd.read_excel(file_path, sheet_name=None)
+            documents = []
+            for sheet_name, df in excel_data.items():
+            # 跳过空表
+                if df.empty:
+                    continue
+            for index, row in df.iterrows():
+                # 构建该行的文本表示
+                content = f"工作表: {sheet_name}, 行号: {index+1}\n"
+                for col_name, value in row.items():
+                    # 处理NaN值
+                    if pd.isna(value):
+                        value = "空"
+                    content += f"{col_name}: {value}\n"
+                
+                # 添加元数据
+                metadata = {
+                    "source": os.path.basename(file_path),
+                    "sheet": sheet_name,
+                    "columns": ", ".join(df.columns),
+                    "row_count": len(df)
+                }
+                
+                documents.append(Document(page_content=content, metadata=metadata))
         
-            self._vectorstore.save_local(self.index_path)
-            return True
+            return documents
         except Exception as e:
-            error_msg = f"添加文件到知识库失败: {str(e)}"
-            # 打印完整错误信息到控制台
-            import traceback
-            traceback.print_exc()
-            raise RuntimeError(error_msg)
+            print(f"处理Excel文件失败: {str(e)}")
+            return []
+
+    def _chunk_document(self, text: str, filename: str, chunk_size=500):
+        """将长文本分割为适当大小的块"""
+        if not text or text.strip() == "":
+            return []
+            
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=50,
+            length_function=len
+        )
+        
+        chunks = splitter.split_text(text)
+        return [
+            Document(
+                page_content=chunk,
+                metadata={
+                    "source": filename,
+                    "chunk_index": i,
+                    "total_chunks": len(chunks)
+                }
+            )
+            for i, chunk in enumerate(chunks) if chunk.strip() != ""
+        ]
     
-    def search(self, query, k=3, full_content=False):
+    def add_document(self, file_path: str, ai_client=None) -> bool:
+            """添加文档到知识库并保存到固定位置"""
+            # ... 前面代码不变 ...
+            
+            # 保存到知识库专属目录
+            kb_file_path = os.path.join(self.KB_FILES_DIR, os.path.basename(file_path))
+            os.makedirs(os.path.dirname(kb_file_path), exist_ok=True)
+            
+            try:
+                with open(file_path, 'rb') as src, open(kb_file_path, 'wb') as dest:
+                    dest.write(src.read())
+                print(f"文件已保存到知识库: {kb_file_path}")
+            except Exception as e:
+                print(f"保存文件到知识库失败: {str(e)}")
+                return False
+            
+            # 添加到知识库后，保存到数据库
+            filename = os.path.basename(file_path)
+            try:
+                # 使用主数据库实例
+                from . import database  # 避免循环导入
+                db = database.Database(db_path=DB_PATH)  # 使用全局DB_PATH
+                
+                if not db.add_knowledge_file(filename, kb_file_path):
+                    print(f"警告: 数据库添加文件记录失败: {filename}")
+            except Exception as e:
+                print(f"保存知识文件到数据库失败: {str(e)}")
+    
+    def search(self, query: str, k: int = 5) -> List[Tuple[str, Dict]]:
         if not self._vectorstore:
             return []
-    
-        docs = self._vectorstore.similarity_search(query, k=k)
         
-        # 根据参数返回完整内容或摘要
-        if full_content:
-            return [doc.page_content for doc in docs]
-        else:
-            return [f"结果 {i}: {doc.page_content[:200]}..." for i, doc in enumerate(docs, 1)]
+        try:
+            # 1. 直接向量相似度搜索
+            docs = self._vectorstore.similarity_search(query, k=k)
+            return [(doc.page_content, doc.metadata) for doc in docs]
+        except Exception as e:
+            print(f"知识库搜索失败: {str(e)}")
+            return []
+        
+    def rebuild_index(self):
+        """完全重建知识库索引"""
+        try:
+            # 删除现有索引文件
+            index_file = os.path.join(self.index_path, "index.faiss")
+            pkl_file = os.path.join(self.index_path, "index.pkl")
+            for file_path in [index_file, pkl_file]:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"已删除索引文件: {file_path}")
+            
+            # 重新初始化空索引
+            self._vectorstore = FAISS.from_documents(
+                [Document(page_content="初始化知识库")], 
+                self._embeddings
+            )
+            self._vectorstore.save_local(self.index_path)
+            print("已重置知识库索引")
+            
+            # 重新添加所有文件
+            for filename in os.listdir(self.KB_FILES_DIR):
+                file_path = os.path.join(self.KB_FILES_DIR, filename)
+                print(f"重新添加文件到知识库: {filename}")
+                self.add_document(file_path)
+                
+            print("知识库索引重建完成")
+            return True
+        except Exception as e:
+            print(f"重建索引失败: {str(e)}")
+            return False
+    def _ai_enhanced_extraction(self, text: str, filename: str) -> List[Document]:
+        """使用AI提取关键信息并分块"""
+        try:
+        # 使用外部传入的ai_client
+            enhanced_content = ai_client.generate_text([
+                {"role": "system", "content": "请从以下文本中提取核心概念和关系，用结构化格式输出"},
+                {"role": "user", "content": text[:5000]}  # 限制长度
+            ])
+            
+            # 组合原始内容和AI提取内容
+            combined_text = f"原始内容:\n{text}\n\nAI提取的关键信息:\n{enhanced_content}"
+            return self._chunk_document(combined_text, filename)
+        except Exception as e:
+            print(f"AI增强提取失败: {str(e)}")
+            # 使用导入的 traceback 模块
+            traceback.print_exc()  
+            # 失败时回退到普通分块
+            return self._chunk_document(text, filename)
+
+    def _parse_rerank_response(self, response: str, k: int, max_index: int) -> List[int]:
+        """解析AI的重新排序响应"""
+        import re
+        numbers = [int(num) for num in re.findall(r'\d+', response)]
+        
+        # 过滤有效索引
+        valid_indices = []
+        for num in numbers:
+            if 1 <= num <= max_index and num-1 not in valid_indices:
+                valid_indices.append(num-1)
+                if len(valid_indices) >= k:
+                    break
+                    
+        return valid_indices
+    ###def get_all_documents(self) -> List[Tuple[str, dict]]:
+        """获取知识库中的所有文档内容"""
+        if not self._vectorstore:
+            return []
+        
+        documents = []
+        # 获取索引中的所有文档ID
+        doc_ids = self._vectorstore.index_to_docstore_id.values()
+        
+        # 通过docstore获取完整文档
+        for doc_id in doc_ids:
+            doc = self._vectorstore.docstore.search(doc_id)
+            if doc:
+                documents.append((doc.page_content, doc.metadata))
+        
+        return documents###
+    def get_all_documents(self) -> List[Dict]:
+        """获取知识库中的所有文档内容"""
+        try:
+            # 使用绝对路径实例化Database
+            db = Database()
+            return db.get_knowledge_documents()
+        except Exception as e:
+            print(f"获取知识库文档失败: {str(e)}")
+            return []
+    def get_index_status(self) -> Dict:
+        """获取索引状态信息"""
+        status = {
+            "index_exists": False,
+            "document_count": 0,
+            "file_count": 0
+        }
+    
+        try:
+            # 检查索引文件是否存在
+            index_file = os.path.join(self.index_path, "index.faiss")
+            status["index_exists"] = os.path.exists(index_file)
+            
+            # 获取文档数量
+            if self._vectorstore:
+                status["document_count"] = len(self._vectorstore.index_to_docstore_id)
+            
+            # 获取文件数量
+            if os.path.exists(self.KB_FILES_DIR):
+                status["file_count"] = len(os.listdir(self.KB_FILES_DIR))
+        
+        except Exception as e:
+            print(f"获取索引状态失败: {str(e)}")
+        
+        return status

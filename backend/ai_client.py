@@ -1,7 +1,8 @@
 import openai
 from typing import List, Dict, Tuple, Optional
 import re
-
+import traceback
+import datetime
 class AIClient:
     def __init__(self, model_name="deepseek-coder-v2", base_url="http://localhost:11434/v1", knowledge_base=None):
         self.client = openai.OpenAI(
@@ -144,7 +145,7 @@ class AIClient:
         if self.knowledge_base:
             try:
                 # 假设knowledge_base有search方法，返回文本结果列表
-                knowledge_results = self.knowledge_base.search(requirement_analysis, k=3, full_content=True)
+                knowledge_results = self.knowledge_base.search(requirement_analysis, k=3)
                 knowledge_context = "\n".join([f"知识库参考 {i+1}:\n{res}" for i, res in enumerate(knowledge_results)])
             except Exception as e:
                 print(f"知识库搜索失败: {str(e)}")
@@ -270,3 +271,82 @@ class AIClient:
                 table_data.append(dict(zip(headers, values)))
         
         return table_data
+    def enhanced_search(self, query: str) -> List[Tuple[str, Dict]]:
+        """增强型搜索，结合向量搜索和AI重新排序"""
+        if not self.knowledge_base:
+            return []
+        
+        try:
+            # 记录搜索日志 - 这是第四步的核心功能
+            log_msg = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 搜索查询: {query}\n"
+            
+            # 1. 扩展短查询（少于3个字符）
+            if len(query) < 3:
+                expanded_query = self.expand_short_query(query)
+                log_msg += f"扩展后查询: {expanded_query}\n"
+            else:
+                expanded_query = query
+            
+            # 2. 向量相似度搜索
+            results = self.knowledge_base.search(expanded_query, k=10)
+            log_msg += f"基础搜索结果数: {len(results)}\n"
+            
+            # 记录前3个搜索结果的内容摘要
+            for i, (content, metadata) in enumerate(results[:3]):
+                source = metadata.get('source', '未知来源')
+                log_msg += f"结果 {i+1} (来源: {source}): {content[:100]}...\n"
+            
+            if not results:
+                log_msg += "未找到基础搜索结果\n"
+                self._write_log(log_msg)
+                return []
+            reranked_results = self.rerank_results(query, results)
+            log_msg += f"重排序后结果数: {len(reranked_results)}\n"
+            
+            # 记录最终结果
+            for i, (content, metadata) in enumerate(reranked_results):
+                source = metadata.get('source', '未知来源')
+                log_msg += f"最终结果 {i+1} (来源: {source}): {content[:100]}...\n"
+            
+            # 写入日志文件
+            self._write_log(log_msg)
+            
+            return reranked_results
+        
+        except Exception as e:
+            error_msg = f"AI增强搜索失败: {str(e)}\n{traceback.format_exc()}"
+            self._write_log(error_msg)
+            print(error_msg)
+            return []    
+            # 3. AI重新排序结果
+    def _write_log(self, log_msg: str):
+            """写入日志文件"""
+            try:
+                with open(self.log_path, "a", encoding="utf-8") as f:
+                    f.write(log_msg + "\n" + "-" * 80 + "\n\n")
+            except Exception as e:
+                print(f"写入日志失败: {str(e)}")
+            
+            except Exception as e:
+                error_msg = f"AI增强搜索失败: {str(e)}\n{traceback.format_exc()}"
+                self._write_log(error_msg)
+                print(error_msg)
+                return []
+        
+            except Exception as e:
+                print(f"AI增强搜索失败: {str(e)}")
+                return []
+    def _parse_rerank_response(self, response: str, k: int, max_index: int) -> List[int]:
+        """解析AI的重新排序响应"""
+        import re
+        numbers = [int(num) for num in re.findall(r'\d+', response)]
+        
+        # 过滤有效索引
+        valid_indices = []
+        for num in numbers:
+            if 1 <= num <= max_index and num-1 not in valid_indices:
+                valid_indices.append(num-1)
+                if len(valid_indices) >= k:
+                    break
+                    
+        return valid_indices
