@@ -307,10 +307,13 @@ elif page == "知识库管理":
     st.title("知识库管理")
     if st.button("完全重建知识库索引", type="secondary"):
         with st.spinner("重建整个知识库索引中..."):
-            st.session_state.kb.rebuild_index()
-        st.success("知识库索引已完全重建！")
+            success = st.session_state.kb.rebuild_index()
+        if success:
+            st.success("知识库索引已完全重建！")
+        else:
+            st.error("重建索引失败，请查看日志")
     
-    
+    # 索引状态
     st.subheader("索引状态")
     try:
         index_status = st.session_state.kb.get_index_status()
@@ -322,27 +325,23 @@ elif page == "知识库管理":
             st.warning("索引中无文档块但存在知识文件，请重建索引")
     except Exception as e:
         st.error(f"获取索引状态失败: {str(e)}")
-    st.subheader("知识库状态")
-    if hasattr(st.session_state.kb, 'vectorstore') and st.session_state.kb.vectorstore:
-        st.success("知识库已成功加载")
-        try:
-            doc_count = len(st.session_state.kb.vectorstore.docstore._dict)
-            st.write(f"包含文档数: {doc_count}")
-        except:
-            st.info("无法获取文档数量")
-    else:
-        st.warning("知识库未完全初始化")
     
-    # 决策表生成测试
+    # 知识库搜索测试
     st.subheader("知识库检索测试")
     test_query = st.text_input("输入测试查询", "用户登录功能，包含管理员和普通用户角色")
     if st.button("测试知识库引用"):
         try:
             # 执行知识库搜索
-            knowledge_context = st.session_state.kb.search(test_query, k=3)
-            st.write("### 知识库引用内容")
-            for i, content in enumerate(knowledge_context):
-                st.text_area(f"知识库结果 {i+1}", content, height=150)
+            knowledge_results = st.session_state.kb.search(test_query, k=3)
+            
+            if knowledge_results:
+                st.success(f"找到 {len(knowledge_results)} 个相关结果")
+                for i, (content, metadata) in enumerate(knowledge_results):
+                    source = metadata.get('source', '未知来源')
+                    with st.expander(f"结果 {i+1} - {source}"):
+                        st.text_area("", value=content, height=150, key=f"kb_result_{i}")
+            else:
+                st.warning("未找到相关结果")
         except Exception as e:
             st.error(f"测试失败: {str(e)}")
     
@@ -356,20 +355,21 @@ elif page == "知识库管理":
     if knowledge_file and st.button("上传到知识库"):
         with st.spinner("上传并处理文件中..."):
             try:
-                # 创建上传目录
-                kb_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
-                os.makedirs(kb_dir, exist_ok=True)
-                
-                # 保存文件
-                file_path = os.path.join(kb_dir, knowledge_file.name)
+                # 保存文件到知识库目录
+                file_path = os.path.join(st.session_state.kb.KB_FILES_DIR, knowledge_file.name)
                 with open(file_path, "wb") as f:
                     f.write(knowledge_file.getbuffer())
-                st.info(f"文件已保存到: {file_path}")
                 
                 # 添加到知识库
-                st.session_state.kb.add_document(file_path)
-                st.session_state.db.add_knowledge_file(knowledge_file.name, file_path)
-                st.success("文件已成功添加到知识库")
+                success = st.session_state.kb.add_document(file_path)
+                
+                if success:
+                    # 添加到数据库
+                    st.session_state.db.add_knowledge_file(knowledge_file.name, file_path)
+                    st.success("文件已成功添加到知识库")
+                else:
+                    st.error("添加文件到知识库失败")
+                    
             except Exception as e:
                 error_msg = f"添加文件到知识库失败: {str(e)}"
                 st.error(error_msg)
@@ -379,11 +379,7 @@ elif page == "知识库管理":
     # 显示知识库文件列表
     st.subheader("知识库文件列表")
     try:
-        kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
-        if os.path.exists(kb_files_dir):
-            kb_files = os.listdir(kb_files_dir)
-        else:
-            kb_files = []
+        kb_files = st.session_state.kb.get_all_documents()
     except Exception as e:
         st.error(f"加载知识库文件列表失败: {str(e)}")
         kb_files = []
@@ -391,175 +387,41 @@ elif page == "知识库管理":
     if not kb_files:
         st.info("知识库中暂无文件")
     else:
-        for i, filename in enumerate(kb_files):
-            col1, col2,col3 = st.columns([3, 1, 1])
+        for i, file_info in enumerate(kb_files):
+            col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
-                st.write(f"{i+1}. {filename}")
+                st.write(f"{i+1}. {file_info['filename']} ({file_info['size']} bytes)")
+                st.caption(f"路径: {file_info['file_path']}")
+                
             with col2:
-                if st.button(f"删除", key=f"del_{filename}"):
+                if st.button(f"删除", key=f"del_{file_info['filename']}"):
                     try:
-                        file_path = os.path.join(kb_files_dir, filename)
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
-                        st.success(f"已删除文件: {filename}")
+                        # 删除物理文件
+                        if os.path.exists(file_info['file_path']):
+                            os.remove(file_info['file_path'])
+                        
+                        # 从数据库删除记录
+                        st.session_state.db.delete_knowledge_file_by_path(file_info['file_path'])
                         
                         # 重建索引
                         with st.spinner("正在更新知识库索引..."):
                             st.session_state.kb.rebuild_index()
-                        st.success("知识库索引已更新！")
+                            
+                        st.success(f"已删除文件: {file_info['filename']}")
                         st.experimental_rerun()
                     except Exception as e:
                         st.error(f"删除文件失败: {str(e)}")
+            
             with col3:
-                if st.button(f"重建索引", key=f"reindex_{filename}"):
-                    with st.spinner("重建知识库索引中..."):
-                        st.session_state.kb.rebuild_index()
-                    st.success("知识库索引已重建！")
-    st.subheader("知识库调试")
-    debug_file = st.selectbox("选择文件进行调试", [f for f in os.listdir(os.path.join(DATA_DIR, "knowledge_base", "files")) if not f.startswith(".")])
-    
-    if st.button("调试知识库内容"):
-        try:
-            # 1. 获取文件路径
-            file_path = os.path.join(DATA_DIR, "knowledge_base", "files", debug_file)
-            
-            # 2. 提取文档块
-            documents = st.session_state.kb._excel_to_text(file_path) if debug_file.endswith(('.xlsx', '.xls')) else []
-            
-            if not documents:
-                st.warning("未提取到文档块")
-                
-                
-            # 3. 显示文档块
-            st.success(f"提取到 {len(documents)} 个文档块:")
-            for i, doc in enumerate(documents[:5]):  # 只显示前5个
-                with st.expander(f"文档块 {i+1} - {doc.metadata.get('source', '未知')}"):
-                    st.text(doc.page_content)
-                    st.json(doc.metadata)
-        except Exception as e:
-            st.error(f"调试失败: {str(e)}")
-    # 知识库搜索
-    st.subheader("AI增强搜索")
-        # 定义ai_query变量 - 这是修复的关键
-    ai_query = st.text_area("输入AI增强搜索查询", height=100, key="ai_query")
-        
-    if st.button("执行AI增强搜索"):
-            try:
-            # 使用AIClient的增强搜索方法
-                results = st.session_state.ai_client.enhanced_search(ai_query)
-                
-                if results:
-                    st.success(f"找到 {len(results)} 个相关结果:")
-                    for i, (content, metadata) in enumerate(results):
-                        source = metadata.get('source', '未知来源')
-                        with st.expander(f"结果 {i+1} - {source}"):
-                            st.write(content)
-                            st.caption(f"来源: {source} | 类型: {metadata.get('type', '未知')}")
-                else:
-                    st.warning("未找到相关结果")
-            except Exception as e:
-                st.error(f"搜索失败: {str(e)}")
-
-elif page == "知识库内容":
-    st.title("知识库内容")
-    
-       # 添加知识库状态检查
-    st.subheader("知识库状态检查")
-    if st.button("手动同步知识库与数据库"):
-        try:
-            kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
-            if os.path.exists(kb_files_dir):
-                files = os.listdir(kb_files_dir)
-                for file in files:
-                    file_path = os.path.join(kb_files_dir, file)
-                    # 添加到数据库
-                    st.session_state.db.add_knowledge_file(file, file_path)
-                st.success(f"已同步 {len(files)} 个文件到数据库")
-            else:
-                st.warning("知识库文件目录不存在")
-        except Exception as e:
-            st.error(f"同步失败: {str(e)}")
-    try:
-            # 尝试两种方式获取知识库文档
-        kb_docs = st.session_state.kb.get_all_documents()
-            
-        if not kb_docs:
-                st.info("数据库中没有知识库文档记录")
-                
-                # 尝试直接读取文件系统
-                kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
-                if os.path.exists(kb_files_dir):
-                    files = os.listdir(kb_files_dir)
-                    if files:
-                        st.warning("警告：文件系统中有知识库文件，但数据库中没有记录")
-                        for i, filename in enumerate(files):
-                            with st.expander(f"{filename} - (未在数据库注册)"):
-                                st.write(f"文件路径: {os.path.join(kb_files_dir, filename)}")
-                                if st.button("添加到数据库", key=f"add_{filename}"):
-                                    try:
-                                        st.session_state.db.add_knowledge_file(
-                                            filename, 
-                                            os.path.join(kb_files_dir, filename)
-                                        )
-                                        st.success("已添加到数据库！")
-                                        st.experimental_rerun()
-                                    except Exception as e:
-                                        st.error(f"添加失败: {str(e)}")
-        else:
-                st.write(f"数据库中有 {len(kb_docs)} 条知识文件记录")
+                if st.button(f"重新索引", key=f"reindex_{file_info['filename']}"):
+                    with st.spinner("重新索引文件中..."):
+                        success = st.session_state.kb.add_document(file_info['file_path'])
+                    if success:
+                        st.success("文件已重新索引！")
+                    else:
+                        st.error("重新索引失败")
     
     
-                for doc in kb_docs:
-                    file_exists = 'file_path' in doc and os.path.exists(doc['file_path'])
-                    with st.expander(f"{doc['filename']} - 上传于 {doc['uploaded_at']}", expanded=False):
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.write(f"**文件路径:** `{doc.get('file_path', '未记录')}`")
-                            st.write(f"**文件状态:** {'存在' if file_exists else '不存在'}")
-                        
-                        with col2:
-                            # 删除按钮
-                            if st.button("删除此文档", key=f"del_kb_{doc['id']}"):
-                                try:
-                                    # 删除物理文件
-                                    if file_exists:
-                                        os.remove(doc['file_path'])
-                                    
-                                    # 删除数据库记录
-                                    st.session_state.db.delete_knowledge_file(doc['id'])
-                                    
-                                    # 重建索引
-                                    with st.spinner("正在更新知识库索引..."):
-                                        st.session_state.kb.rebuild_index()
-                                    
-                                    st.success("文档已删除，知识库索引已更新！")
-                                    st.experimental_rerun()
-                                except Exception as e:
-                                    st.error(f"删除失败: {str(e)}")
-                        
-                        # 显示文件预览
-                                    if file_exists:
-                                        try:
-                                            preview = DocumentProcessor.get_file_preview(doc['file_path'])
-                                            st.subheader("文件预览")
-                                            st.text_area("", value=preview, height=300, 
-                                                        key=f"preview_{doc['id']}", disabled=True)
-                                        except Exception as e:
-                                            st.error(f"预览失败: {str(e)}")
-                                    else:
-                                        st.warning("文件不存在，无法预览")
-                        
-                        # 重建索引按钮
-                                    if st.button("重建此文档索引", key=f"reindex_{doc['id']}"):
-                                        with st.spinner("重建索引中..."):
-                                            try:
-                                                # 重新添加文件到知识库
-                                                st.session_state.kb.add_document(doc['file_path'])
-                                                st.success("文档索引已重建！")
-                                            except Exception as e:
-                                                st.error(f"重建索引失败: {str(e)}")
-    
-    except Exception as e:
         st.error(f"加载知识库内容失败: {str(e)}")
         # 添加 traceback 导入检查
         import traceback
@@ -586,7 +448,139 @@ elif page == "知识库内容":
             st.sidebar.write(f"实际知识库文件: {len(files)}")
     except Exception as e:
         st.sidebar.error(f"数据库检查失败: {str(e)}")
-# 添加一些样式
+
+elif page == "知识库内容":
+    st.title("知识库内容")
+    
+    # 添加知识库状态检查
+    st.subheader("知识库状态检查")
+    if st.button("手动同步知识库与数据库", key="sync_kb_db"):
+        try:
+            kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
+            if os.path.exists(kb_files_dir):
+                files = os.listdir(kb_files_dir)
+                for file in files:
+                    file_path = os.path.join(kb_files_dir, file)
+                    # 添加到数据库
+                    st.session_state.db.add_knowledge_file(file, file_path)
+                st.success(f"已同步 {len(files)} 个文件到数据库")
+            else:
+                st.warning("知识库文件目录不存在")
+        except Exception as e:
+            st.error(f"同步失败: {str(e)}")
+    
+    try:
+        # 尝试获取知识库文档
+        kb_docs = st.session_state.kb.get_all_documents()
+        
+        if not kb_docs:
+            st.info("知识库中暂无文件")
+            
+            # 尝试直接读取文件系统
+            kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
+            if os.path.exists(kb_files_dir):
+                files = os.listdir(kb_files_dir)
+                if files:
+                    st.warning("警告：文件系统中有知识库文件，但知识库索引中没有记录")
+                    for i, filename in enumerate(files):
+                        with st.expander(f"{filename} - (未在知识库索引中)"):
+                            st.write(f"文件路径: {os.path.join(kb_files_dir, filename)}")
+                            if st.button("添加到知识库索引", key=f"add_to_index_{filename}"):
+                                try:
+                                    file_path = os.path.join(kb_files_dir, filename)
+                                    success = st.session_state.kb.add_document(file_path)
+                                    if success:
+                                        st.success("已添加到知识库索引！")
+                                        st.experimental_rerun()
+                                    else:
+                                        st.error("添加到知识库索引失败")
+                                except Exception as e:
+                                    st.error(f"添加失败: {str(e)}")
+        else:
+            st.write(f"知识库中有 {len(kb_docs)} 个文件")
+            
+            for i, doc in enumerate(kb_docs):
+                file_exists = 'file_path' in doc and os.path.exists(doc['file_path'])
+                with st.expander(f"{doc['filename']} - 上传于 {doc.get('uploaded_at', '未知时间')}", expanded=False, key=f"doc_{i}"):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"**文件路径:** `{doc.get('file_path', '未记录')}`")
+                        st.write(f"**文件状态:** {'存在' if file_exists else '不存在'}")
+                    
+                    with col2:
+                        # 删除按钮
+                        if st.button("删除此文档", key=f"del_kb_{i}"):
+                            try:
+                                # 删除物理文件
+                                if file_exists:
+                                    os.remove(doc['file_path'])
+                                
+                                # 删除数据库记录
+                                st.session_state.db.delete_knowledge_file(doc['id'])
+                                
+                                # 重建索引
+                                with st.spinner("正在更新知识库索引..."):
+                                    st.session_state.kb.rebuild_index()
+                                
+                                st.success("文档已删除，知识库索引已更新！")
+                                st.experimental_rerun()
+                            except Exception as e:
+                                st.error(f"删除失败: {str(e)}")
+                    
+                    # 显示文件预览
+                    if file_exists:
+                        try:
+                            preview = DocumentProcessor.get_file_preview(doc['file_path'])
+                            st.subheader("文件预览")
+                            st.text_area("", value=preview, height=300, 
+                                        key=f"preview_{i}", disabled=True)
+                        except Exception as e:
+                            st.error(f"预览失败: {str(e)}")
+                    else:
+                        st.warning("文件不存在，无法预览")
+                    
+                    # 重建索引按钮
+                    if st.button("重建此文档索引", key=f"reindex_{i}"):
+                        with st.spinner("重建索引中..."):
+                            try:
+                                # 重新添加文件到知识库
+                                if file_exists:
+                                    st.session_state.kb.add_document(doc['file_path'])
+                                    st.success("文档索引已重建！")
+                                else:
+                                    st.error("文件不存在，无法重建索引")
+                            except Exception as e:
+                                st.error(f"重建索引失败: {str(e)}")
+    
+    except Exception as e:
+        st.error(f"加载知识库内容失败: {str(e)}")
+        # 添加 traceback 导入检查
+        import traceback
+        st.text(traceback.format_exc())
+    
+    # 数据库状态检查
+    st.sidebar.subheader("数据库状态")
+    try:
+        # 检查知识库文件表是否存在
+        conn = st.session_state.db._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_files'")
+        table_exists = cursor.fetchone() is not None
+        st.sidebar.write(f"知识库文件表: {'存在' if table_exists else '不存在'}")
+        
+        # 检查知识库文件数量
+        if table_exists:
+            cursor.execute("SELECT COUNT(*) FROM knowledge_files")
+            count = cursor.fetchone()[0]
+            st.sidebar.write(f"知识库文件记录: {count}")
+        
+        # 检查文件目录中的实际文件数量
+        kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
+        if os.path.exists(kb_files_dir):
+            files = os.listdir(kb_files_dir)
+            st.sidebar.write(f"实际知识库文件: {len(files)}")
+    except Exception as e:
+        st.sidebar.error(f"数据库检查失败: {str(e)}")# 添加一些样式
 st.markdown("""
 <style>
     .stExpander {

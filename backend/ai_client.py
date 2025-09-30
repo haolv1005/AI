@@ -139,21 +139,32 @@ class AIClient:
         return self.generate_text(messages)
 
     def generate_decision_table(self, requirement_analysis: str, prompt: str) -> str:
-        """生成决策表，整合知识库内容（修复版）"""
-        # 安全处理知识库检索
+        """生成决策表，整合知识库内容"""
+        # 检索知识库
         knowledge_context = ""
         if self.knowledge_base:
             try:
-                # 假设knowledge_base有search方法，返回文本结果列表
-                knowledge_results = self.knowledge_base.search(requirement_analysis, k=3)
-                knowledge_context = "\n".join([f"知识库参考 {i+1}:\n{res}" for i, res in enumerate(knowledge_results)])
+                # 从需求分析中提取关键词
+                keywords = self._extract_keywords_from_analysis(requirement_analysis)
+                
+                # 使用关键词搜索知识库
+                search_query = " ".join(keywords[:3]) if keywords else requirement_analysis[:100]
+                knowledge_results = self.knowledge_base.search(search_query, k=3)
+                
+                if knowledge_results:
+                    knowledge_context = "相关知识库内容:\n"
+                    for i, (content, metadata) in enumerate(knowledge_results):
+                        source = metadata.get('source', '未知来源')
+                        knowledge_context += f"\n--- 参考 {i+1} ({source}) ---\n{content}\n"
+                else:
+                    knowledge_context = "知识库中没有找到相关内容。"
+                    
             except Exception as e:
-                print(f"知识库搜索失败: {str(e)}")
-                knowledge_context = "知识库检索失败，将仅基于需求分析生成决策表"
+                knowledge_context = f"知识库检索出错: {str(e)}"
         else:
-            knowledge_context = "未配置知识库，将仅基于需求分析生成决策表"
+            knowledge_context = "未配置知识库。"
         
-        # 决策表生成提示词
+        # 生成决策表
         system_content = """您作为高级测试架构师，请基于需求分析点生成测试决策表：
 1. **条件分析**：
    - 功能点标识：引用分析中的功能点编号（如FP001）
@@ -162,9 +173,8 @@ class AIClient:
    - 用户角色：管理员/普通用户等（需覆盖所有角色）
 
 2. **知识库整合**：
-   - 自动关联相似功能的历史用例
+   - 参考相关知识库内容，确保决策表与历史测试用例一致
    - 应用行业标准：等价类划分/边界值分析/因果图
-   - 规避历史缺陷：引用知识库中记录的常见问题点
 
 3. **输出格式**（表格）：
 | 组合ID | 功能点 | 等价类 | 边界状态 | 用户角色 | 预期动作 | 优先级 | 知识库参考 |
@@ -271,6 +281,23 @@ class AIClient:
                 table_data.append(dict(zip(headers, values)))
         
         return table_data
+    def _extract_keywords_from_analysis(self, analysis_text: str) -> List[str]:
+        """从需求分析中提取关键词"""
+        # 提取功能点标识
+        patterns = [
+            r'FP\d+',  # 功能点编号
+            r'[A-Za-z]+登录',  # 登录相关
+            r'[A-Za-z]+权限',  # 权限相关
+            r'边界值',  # 边界值相关
+            r'等价类',  # 等价类相关
+        ]
+        
+        keywords = []
+        for pattern in patterns:
+            matches = re.findall(pattern, analysis_text)
+            keywords.extend(matches)
+        
+        return list(set(keywords))  # 去重
     def enhanced_search(self, query: str) -> List[Tuple[str, Dict]]:
         """增强型搜索，结合向量搜索和AI重新排序"""
         if not self.knowledge_base:
