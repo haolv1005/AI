@@ -244,7 +244,7 @@ class AIClient:
         
         return test_cases, validation_report
     
-    def extract_tabular_data(self, text: str) -> List[Dict[str, str]]:
+
         """从文本中提取表格数据（用于Excel生成）"""
         table_data = []
         lines = text.strip().split('\n')

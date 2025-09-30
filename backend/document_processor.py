@@ -27,44 +27,10 @@ class DocumentProcessor:
         else:
             raise ValueError("Unsupported file format")
     # 添加新方法
-    def extract_structure(self, file_path: str) -> dict:
-        """提取文档结构信息"""
-        if file_path.endswith('.docx'):
-            return self._extract_word_structure(file_path)
-        elif file_path.endswith('.pdf'):
-            return self._extract_pdf_structure(file_path)
-        return {}
 
-    def _extract_word_structure(self, file_path: str) -> dict:
-        """提取Word文档结构"""
-        doc = docx.Document(file_path)
-        structure = {"sections": []}
-        
-        current_section = {"title": "", "paragraphs": []}
-        for para in doc.paragraphs:
-            if para.style.name.startswith('Heading'):
-                if current_section["title"]:
-                    structure["sections"].append(current_section)
-                current_section = {"title": para.text, "paragraphs": []}
-            else:
-                current_section["paragraphs"].append(para.text)
-        
-        if current_section["title"]:
-            structure["sections"].append(current_section)
-        return structure
 
-    def _extract_pdf_structure(self, file_path: str) -> dict:
-        """提取PDF文档结构（简化版）"""
-        with open(file_path, 'rb') as file:
-            reader = PdfReader(file)
-            structure = {"pages": []}
-            
-            for i, page in enumerate(reader.pages):
-                structure["pages"].append({
-                    "number": i+1,
-                    "content": page.extract_text()[:500] + "..."  # 截取部分内容
-                })
-        return structure
+
+
     @staticmethod
     def get_file_preview(file_path: str) -> str:
             """获取文件的安全预览，最多显示指定字符数"""

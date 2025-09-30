@@ -174,55 +174,10 @@ class KnowledgeBase:
         except Exception as e:
             print(f"重建索引失败: {str(e)}")
             return False
-    def _ai_enhanced_extraction(self, text: str, filename: str) -> List[Document]:
-        """使用AI提取关键信息并分块"""
-        try:
-        # 使用外部传入的ai_client
-            enhanced_content = ai_client.generate_text([
-                {"role": "system", "content": "请从以下文本中提取核心概念和关系，用结构化格式输出"},
-                {"role": "user", "content": text[:5000]}  # 限制长度
-            ])
-            
-            # 组合原始内容和AI提取内容
-            combined_text = f"原始内容:\n{text}\n\nAI提取的关键信息:\n{enhanced_content}"
-            return self._chunk_document(combined_text, filename)
-        except Exception as e:
-            print(f"AI增强提取失败: {str(e)}")
-            # 使用导入的 traceback 模块
-            traceback.print_exc()  
-            # 失败时回退到普通分块
-            return self._chunk_document(text, filename)
 
-    def _parse_rerank_response(self, response: str, k: int, max_index: int) -> List[int]:
-        """解析AI的重新排序响应"""
-        import re
-        numbers = [int(num) for num in re.findall(r'\d+', response)]
-        
-        # 过滤有效索引
-        valid_indices = []
-        for num in numbers:
-            if 1 <= num <= max_index and num-1 not in valid_indices:
-                valid_indices.append(num-1)
-                if len(valid_indices) >= k:
-                    break
-                    
-        return valid_indices
-    ###def get_all_documents(self) -> List[Tuple[str, dict]]:
-        """获取知识库中的所有文档内容"""
-        if not self._vectorstore:
-            return []
-        
-        documents = []
-        # 获取索引中的所有文档ID
-        doc_ids = self._vectorstore.index_to_docstore_id.values()
-        
-        # 通过docstore获取完整文档
-        for doc_id in doc_ids:
-            doc = self._vectorstore.docstore.search(doc_id)
-            if doc:
-                documents.append((doc.page_content, doc.metadata))
-        
-        return documents###
+
+
+
     def get_all_documents(self) -> List[Dict]:
         """获取知识库中的所有文档内容"""
         try:

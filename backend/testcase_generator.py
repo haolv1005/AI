@@ -42,20 +42,4 @@ class TestCaseGenerator:
         except Exception as e:
             raise RuntimeError(f"生成Excel失败: {str(e)}")
     # 在Database类中添加删除方法
-    def delete_knowledge_file(self, file_id: int):
-        """删除知识库文件记录"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 先获取文件路径
-        cursor.execute("SELECT file_path FROM knowledge_files WHERE id = ?", (file_id,))
-        file_path = cursor.fetchone()[0]
-        
-        # 删除记录
-        cursor.execute("DELETE FROM knowledge_files WHERE id = ?", (file_id,))
-        
-        # 删除向量文档
-        cursor.execute("DELETE FROM vector_documents WHERE source = ?", (file_path,))
-        
-        conn.commit()
-        return True
+
