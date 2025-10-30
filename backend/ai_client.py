@@ -106,37 +106,7 @@ class AIClient:
         return requirement_analysis, validation_report
 
 
-        """生成决策表，整合知识库内容（优化版）"""
-        # 检索知识库（保持不变）...
         
-        # 决策表生成提示词
-        system_content = """您作为高级测试架构师，请基于需求分析点生成测试决策表：
-1. **条件分析**：
-   - 功能点标识：引用分析中的功能点编号（如FP001）
-   - 等价类状态：有效/无效（对应分析中的等价类划分）
-   - 边界值状态：正常/边界/越界（对应分析中的边界值）
-   - 用户角色：管理员/普通用户等（需覆盖所有角色）
-
-2. **知识库整合**：
-   - 自动关联相似功能的历史用例
-   - 应用行业标准：等价类划分/边界值分析/因果图
-   - 规避历史缺陷：引用知识库中记录的常见问题点
-
-3. **输出格式**（表格）：
-| 组合ID | 功能点 | 等价类 | 边界状态 | 用户角色 | 预期动作 | 优先级 | 知识库参考 |
-|---|---|---|---|---|---|---|---|
-| 1 | FP001 | 有效 | 正常 | 管理员 | 成功处理 | P0 | KB-001 |
-
-4. **特殊要求**：
-   - 必须覆盖分析中的所有功能点
-   - 每个功能点需包含所有等价类组合
-   - 边界状态需包含：正常/边界/越界三种情况"""
-
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": f"需求分析点：{requirement_analysis}\n{knowledge_context}\n附加要求：{prompt}"}
-        ]
-        return self.generate_text(messages)
 
     def generate_decision_table(self, requirement_analysis: str, prompt: str) -> str:
         """生成决策表，整合知识库内容"""
@@ -144,11 +114,13 @@ class AIClient:
         knowledge_context = ""
         if self.knowledge_base:
             try:
-                # 从需求分析中提取关键词
+                # 从需求分析中提取关键词 - 改进版本
                 keywords = self._extract_keywords_from_analysis(requirement_analysis)
                 
                 # 使用关键词搜索知识库
                 search_query = " ".join(keywords[:3]) if keywords else requirement_analysis[:100]
+                print(f"搜索知识库的关键词: {search_query}")  # 调试信息
+                
                 knowledge_results = self.knowledge_base.search(search_query, k=3)
                 
                 if knowledge_results:
@@ -161,36 +133,37 @@ class AIClient:
                     
             except Exception as e:
                 knowledge_context = f"知识库检索出错: {str(e)}"
+                print(f"知识库检索错误: {e}")  # 调试信息
         else:
             knowledge_context = "未配置知识库。"
         
-        # 生成决策表
+        # 改进的决策表生成提示词
         system_content = """您作为高级测试架构师，请基于需求分析点生成测试决策表：
-1. **条件分析**：
-   - 功能点标识：引用分析中的功能点编号（如FP001）
-   - 等价类状态：有效/无效（对应分析中的等价类划分）
-   - 边界值状态：正常/边界/越界（对应分析中的边界值）
-   - 用户角色：管理员/普通用户等（需覆盖所有角色）
 
-2. **知识库整合**：
-   - 参考相关知识库内容，确保决策表与历史测试用例一致
-   - 应用行业标准：等价类划分/边界值分析/因果图
+    请严格按照以下格式生成表格：
 
-3. **输出格式**（表格）：
-| 组合ID | 功能点 | 等价类 | 边界状态 | 用户角色 | 预期动作 | 优先级 | 知识库参考 |
-|---|---|---|---|---|---|---|---|
-| 1 | FP001 | 有效 | 正常 | 管理员 | 成功处理 | P0 | KB-001 |
+    | 组合ID | 功能点 | 等价类 | 边界状态 | 用户角色 | 预期动作 | 优先级 | 知识库参考 |
+    |---|---|---|---|---|---|---|---|
+    | 1 | FP001 | 有效 | 正常 | 管理员 | 成功处理 | P0 | KB-001 |
+    | 2 | FP001 | 有效 | 边界 | 管理员 | 成功处理 | P1 | KB-001 |
+    | 3 | FP001 | 无效 | 越界 | 管理员 | 显示错误 | P2 | KB-002 |
 
-4. **特殊要求**：
-   - 必须覆盖分析中的所有功能点
-   - 每个功能点需包含所有等价类组合
-   - 边界状态需包含：正常/边界/越界三种情况"""
+    生成要求：
+    1. 必须覆盖需求分析中的所有功能点
+    2. 每个功能点需要包含：有效/无效等价类，正常/边界/越界状态
+    3. 优先级定义：P0(核心功能)、P1(重要功能)、P2(一般功能)
+    4. 如果有知识库参考，请标注对应的知识库条目"""
 
         messages = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": f"需求分析点：{requirement_analysis}\n{knowledge_context}\n附加要求：{prompt}"}
         ]
-        return self.generate_text(messages)
+        
+        print("正在生成决策表...")  # 调试信息
+        result = self.generate_text(messages)
+        print(f"决策表生成完成，长度: {len(result)}")  # 调试信息
+        
+        return result
     
     def generate_test_cases(self, decision_table: str, requirement_text: str, prompt: str) -> Tuple[str, str]:
         """生成测试用例并验证（优化版）"""
@@ -282,20 +255,29 @@ class AIClient:
         
         return table_data
     def _extract_keywords_from_analysis(self, analysis_text: str) -> List[str]:
-        """从需求分析中提取关键词"""
-        # 提取功能点标识
+        """从需求分析中提取关键词 - 改进版本"""
+        # 改进的模式匹配
         patterns = [
-            r'FP\d+',  # 功能点编号
-            r'[A-Za-z]+登录',  # 登录相关
-            r'[A-Za-z]+权限',  # 权限相关
-            r'边界值',  # 边界值相关
-            r'等价类',  # 等价类相关
+            r'FP\d+',                    # 功能点编号
+            r'[A-Za-z\u4e00-\u9fa5]+登录', # 登录相关（支持中文）
+            r'[A-Za-z\u4e00-\u9fa5]+权限', # 权限相关
+            r'边界值?',                   # 边界值相关
+            r'等价类?',                   # 等价类相关
+            r'[A-Za-z\u4e00-\u9fa5]+功能', # 功能相关
+            r'[A-Za-z\u4e00-\u9fa5]+测试', # 测试相关
         ]
         
         keywords = []
         for pattern in patterns:
             matches = re.findall(pattern, analysis_text)
             keywords.extend(matches)
+        
+        # 添加基于分词的关键词提取（如果analysis_text包含中文）
+        import jieba  # 需要安装: pip install jieba
+        words = jieba.cut(analysis_text)
+        for word in words:
+            if len(word) >= 2 and any(char not in '的了吗呢吧啊' for char in word):
+                keywords.append(word)
         
         return list(set(keywords))  # 去重
     def enhanced_search(self, query: str) -> List[Tuple[str, Dict]]:
