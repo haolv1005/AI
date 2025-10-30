@@ -108,7 +108,18 @@ class Database:
             for row in cursor.fetchall():
                 record = dict(row)
                 record['exists'] = os.path.exists(record['file_path'])
-                records.append(record)
+                if record['exists']:
+                    try:
+                        record['size'] = os.path.getsize(record['file_path'])
+                        # 转换为更友好的格式
+                        record['size_str'] = self._format_file_size(record['size'])
+                    except Exception as e:
+                        record['size'] = 0
+                        record['size_str'] = "未知大小"
+                else:
+                    record['size'] = 0
+                    record['size_str'] = "文件不存在"
+                    records.append(record)
             
             print(f"从数据库获取到 {len(records)} 条知识文件记录")
             return records
@@ -116,7 +127,18 @@ class Database:
             print(f"获取知识库文档失败: {str(e)}")
             print(traceback.format_exc())
             return []
-    
+    def _format_file_size(self, size_bytes: int) -> str:
+        """格式化文件大小为可读字符串"""
+        if size_bytes == 0:
+            return "0 B"
+        
+        size_names = ["B", "KB", "MB", "GB"]
+        i = 0
+        while size_bytes >= 1024 and i < len(size_names) - 1:
+            size_bytes /= 1024.0
+            i += 1
+        
+        return f"{size_bytes:.2f} {size_names[i]}"
     def get_knowledge_documents(self) -> List[Dict]:
         """获取知识库文档列表，添加详细日志"""
         try:

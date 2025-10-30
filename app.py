@@ -2,6 +2,7 @@
 import os
 import sys
 from pathlib import Path
+import traceback
 
 # 设置基础路径
 BASE_DIR = "E:/sm-ai"
@@ -34,7 +35,6 @@ st.set_page_config(page_title="AI 测试用例生成系统", layout="wide")
 import time
 from datetime import datetime
 from typing import List, Dict
-import traceback
 
 # 导入后端模块
 from backend.database import Database
@@ -60,7 +60,7 @@ if 'initialized' not in st.session_state:
         
         # 知识库使用自定义路径
         kb_dir = os.path.join(DATA_DIR, "knowledge_base")
-        st.session_state.kb = KnowledgeBase(kb_dir=kb_dir)
+        st.session_state.kb = KnowledgeBase(kb_dir=kb_dir, db_path=DB_PATH)
         
         # 测试用例生成器使用自定义输出目录
         output_dir = os.path.join(DATA_DIR, "outputs")
@@ -74,8 +74,8 @@ if 'initialized' not in st.session_state:
         
         st.session_state.initialized = True
         st.toast("系统初始化完成", icon="✅")
-    except Exception as e:
-        st.error(f"初始化失败: {str(e)}")
+    except Exception as init_error:
+        st.error(f"初始化失败: {str(init_error)}")
         st.error("请检查配置文件或依赖项安装情况")
         st.stop()
 
@@ -120,8 +120,8 @@ if page == "生成测试用例":
             file_path = save_uploaded_file(uploaded_file)
             st.info(f"文件已保存到: {file_path}")
             doc_text = st.session_state.document_processor.read_file(file_path)
-        except Exception as e:
-            st.error(f"文件处理失败: {str(e)}")
+        except Exception as file_error:
+            st.error(f"文件处理失败: {str(file_error)}")
             st.stop()
         
         # 进度显示
@@ -133,16 +133,16 @@ if page == "生成测试用例":
         status_text.text("阶段1/3: 生成文档总结...")
         try:
             summary = st.session_state.ai_client.generate_summary(doc_text, summary_prompt)
-        except Exception as e:
-            st.error(f"生成总结失败: {str(e)}")
+        except Exception as summary_error:
+            st.error(f"生成总结失败: {str(summary_error)}")
             st.stop()
         
         progress_bar.progress(25)
         status_text.text("阶段1/3: 生成需求分析点...")
         try:
             requirement_analysis, analysis_report = st.session_state.ai_client.generate_requirement_analysis(summary)
-        except Exception as e:
-            st.error(f"需求分析失败: {str(e)}")
+        except Exception as analysis_error:
+            st.error(f"需求分析失败: {str(analysis_error)}")
             st.stop()
         
         # 显示阶段1结果
@@ -163,8 +163,8 @@ if page == "生成测试用例":
                 requirement_analysis, 
                 f"{decision_prompt}\n需求分析验证报告：{analysis_report}"
             )
-        except Exception as e:
-            st.error(f"决策表生成失败: {str(e)}")
+        except Exception as decision_error:
+            st.error(f"决策表生成失败: {str(decision_error)}")
             st.stop()
         
         # 显示阶段2结果
@@ -180,8 +180,8 @@ if page == "生成测试用例":
                 doc_text, 
                 testcase_prompt
             )
-        except Exception as e:
-            st.error(f"测试用例生成失败: {str(e)}")
+        except Exception as testcase_error:
+            st.error(f"测试用例生成失败: {str(testcase_error)}")
             st.stop()
         
         progress_bar.progress(95)
@@ -198,8 +198,8 @@ if page == "生成测试用例":
         try:
             output_path = st.session_state.testcase_gen.generate_excel(test_cases, uploaded_file.name)
             st.success(f"Excel 文件已生成: {output_path}")
-        except Exception as e:
-            st.error(f"生成 Excel 文件失败: {str(e)}")
+        except Exception as excel_error:
+            st.error(f"生成 Excel 文件失败: {str(excel_error)}")
             st.stop()
         
         # 保存记录到数据库
@@ -216,8 +216,8 @@ if page == "生成测试用例":
                 test_validation=test_validation
             )
             st.info(f"记录已保存到数据库，ID: {record_id}")
-        except Exception as e:
-            st.warning(f"保存记录失败: {str(e)}")
+        except Exception as db_error:
+            st.warning(f"保存记录失败: {str(db_error)}")
         
         # 完成状态
         progress_bar.progress(100)
@@ -240,7 +240,12 @@ if page == "生成测试用例":
 elif page == "历史记录":
     st.title("历史生成记录")
     
-    records = st.session_state.db.get_records()
+    try:
+        records = st.session_state.db.get_records()
+    except Exception as records_error:
+        st.error(f"加载历史记录失败: {str(records_error)}")
+        records = []
+    
     if not records:
         st.info("暂无历史记录")
     else:
@@ -305,13 +310,19 @@ elif page == "历史记录":
 
 elif page == "知识库管理":
     st.title("知识库管理")
+    
+    # 重建索引按钮
     if st.button("完全重建知识库索引", type="secondary"):
         with st.spinner("重建整个知识库索引中..."):
-            success = st.session_state.kb.rebuild_index()
-        if success:
-            st.success("知识库索引已完全重建！")
-        else:
-            st.error("重建索引失败，请查看日志")
+            try:
+                success = st.session_state.kb.rebuild_index()
+                if success:
+                    st.success("知识库索引已完全重建！")
+                else:
+                    st.error("重建索引失败，请查看日志")
+            except Exception as rebuild_error:
+                st.error(f"重建索引失败: {str(rebuild_error)}")
+                st.text(traceback.format_exc())
     
     # 索引状态
     st.subheader("索引状态")
@@ -323,8 +334,9 @@ elif page == "知识库管理":
         
         if index_status['document_count'] == 0 and index_status['file_count'] > 0:
             st.warning("索引中无文档块但存在知识文件，请重建索引")
-    except Exception as e:
-        st.error(f"获取索引状态失败: {str(e)}")
+    except Exception as status_error:
+        st.error(f"获取索引状态失败: {str(status_error)}")
+        st.text(traceback.format_exc())
     
     # 知识库搜索测试
     st.subheader("知识库检索测试")
@@ -342,8 +354,9 @@ elif page == "知识库管理":
                         st.text_area("", value=content, height=150, key=f"kb_result_{i}")
             else:
                 st.warning("未找到相关结果")
-        except Exception as e:
-            st.error(f"测试失败: {str(e)}")
+        except Exception as search_error:
+            st.error(f"测试失败: {str(search_error)}")
+            st.text(traceback.format_exc())
     
     # 上传知识文件
     st.subheader("上传知识文件")
@@ -370,8 +383,8 @@ elif page == "知识库管理":
                 else:
                     st.error("添加文件到知识库失败")
                     
-            except Exception as e:
-                error_msg = f"添加文件到知识库失败: {str(e)}"
+            except Exception as upload_error:
+                error_msg = f"添加文件到知识库失败: {str(upload_error)}"
                 st.error(error_msg)
                 with st.expander("查看错误详情"):
                     st.text(traceback.format_exc())
@@ -380,74 +393,63 @@ elif page == "知识库管理":
     st.subheader("知识库文件列表")
     try:
         kb_files = st.session_state.kb.get_all_documents()
-    except Exception as e:
-        st.error(f"加载知识库文件列表失败: {str(e)}")
+    except Exception as kb_files_error:
+        st.error(f"加载知识库文件列表失败: {str(kb_files_error)}")
+        st.text(traceback.format_exc())
         kb_files = []
-    
+
     if not kb_files:
         st.info("知识库中暂无文件")
     else:
         for i, file_info in enumerate(kb_files):
             col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
-                st.write(f"{i+1}. {file_info['filename']} ({file_info['size']} bytes)")
-                st.caption(f"路径: {file_info['file_path']}")
+                filename = file_info.get('filename', '未知文件')
+                size_str = file_info.get('size_str', '未知大小')
+                file_path = file_info.get('file_path', '路径未知')
+                exists = file_info.get('exists', False)
+                file_id = file_info.get('id', i)
+                
+                st.write(f"{i+1}. {filename} ({size_str})")
+                st.caption(f"路径: {file_path}")
+                if not exists:
+                    st.error("⚠️ 文件不存在")
                 
             with col2:
-                if st.button(f"删除", key=f"del_{file_info['filename']}"):
+                delete_key = f"del_{file_id}_{i}"
+                if st.button(f"删除", key=delete_key):
                     try:
                         # 删除物理文件
-                        if os.path.exists(file_info['file_path']):
-                            os.remove(file_info['file_path'])
+                        if exists and os.path.exists(file_path):
+                            os.remove(file_path)
                         
                         # 从数据库删除记录
-                        st.session_state.db.delete_knowledge_file_by_path(file_info['file_path'])
+                        if file_id and file_id != i:
+                            st.session_state.db.delete_knowledge_file(file_id)
                         
                         # 重建索引
                         with st.spinner("正在更新知识库索引..."):
                             st.session_state.kb.rebuild_index()
                             
-                        st.success(f"已删除文件: {file_info['filename']}")
-                        st.experimental_rerun()
-                    except Exception as e:
-                        st.error(f"删除文件失败: {str(e)}")
+                        st.success(f"已删除文件: {filename}")
+                        st.rerun()
+                    except Exception as delete_error:
+                        st.error(f"删除文件失败: {str(delete_error)}")
+                        st.text(traceback.format_exc())
             
             with col3:
-                if st.button(f"重新索引", key=f"reindex_{file_info['filename']}"):
+                reindex_key = f"reindex_{file_id}_{i}"
+                if exists and st.button(f"重新索引", key=reindex_key):
                     with st.spinner("重新索引文件中..."):
-                        success = st.session_state.kb.add_document(file_info['file_path'])
-                    if success:
-                        st.success("文件已重新索引！")
-                    else:
-                        st.error("重新索引失败")
-    
-    
-        st.error(f"加载知识库内容失败: {str(e)}")
-        # 添加 traceback 导入检查
-        import traceback
-        st.text(traceback.format_exc())    
-    st.sidebar.subheader("数据库状态")
-    try:
-        # 检查知识库文件表是否存在
-        conn = st.session_state.db._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_files'")
-        table_exists = cursor.fetchone() is not None
-        st.sidebar.write(f"知识库文件表: {'存在' if table_exists else '不存在'}")
-        
-        # 检查知识库文件数量
-        if table_exists:
-            cursor.execute("SELECT COUNT(*) FROM knowledge_files")
-            count = cursor.fetchone()[0]
-            st.sidebar.write(f"知识库文件记录: {count}")
-        
-        # 检查文件目录中的实际文件数量
-        kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
-        if os.path.exists(kb_files_dir):
-            files = os.listdir(kb_files_dir)
-            st.sidebar.write(f"实际知识库文件: {len(files)}")
-    except Exception as e:
-        st.sidebar.error(f"数据库检查失败: {str(e)}")
+                        try:
+                            success = st.session_state.kb.add_document(file_path)
+                            if success:
+                                st.success("文件已重新索引！")
+                            else:
+                                st.error("重新索引失败")
+                        except Exception as reindex_error:
+                            st.error(f"重新索引失败: {str(reindex_error)}")
+                            st.text(traceback.format_exc())
 
 elif page == "知识库内容":
     st.title("知识库内容")
@@ -466,8 +468,9 @@ elif page == "知识库内容":
                 st.success(f"已同步 {len(files)} 个文件到数据库")
             else:
                 st.warning("知识库文件目录不存在")
-        except Exception as e:
-            st.error(f"同步失败: {str(e)}")
+        except Exception as sync_error:
+            st.error(f"同步失败: {str(sync_error)}")
+            st.text(traceback.format_exc())
     
     try:
         # 尝试获取知识库文档
@@ -483,6 +486,7 @@ elif page == "知识库内容":
                 if files:
                     st.warning("警告：文件系统中有知识库文件，但知识库索引中没有记录")
                     for i, filename in enumerate(files):
+                        # 移除 expander 的 key 参数
                         with st.expander(f"{filename} - (未在知识库索引中)"):
                             st.write(f"文件路径: {os.path.join(kb_files_dir, filename)}")
                             if st.button("添加到知识库索引", key=f"add_to_index_{filename}"):
@@ -491,17 +495,19 @@ elif page == "知识库内容":
                                     success = st.session_state.kb.add_document(file_path)
                                     if success:
                                         st.success("已添加到知识库索引！")
-                                        st.experimental_rerun()
+                                        st.rerun()
                                     else:
                                         st.error("添加到知识库索引失败")
-                                except Exception as e:
-                                    st.error(f"添加失败: {str(e)}")
+                                except Exception as add_error:
+                                    st.error(f"添加失败: {str(add_error)}")
+                                    st.text(traceback.format_exc())
         else:
             st.write(f"知识库中有 {len(kb_docs)} 个文件")
             
             for i, doc in enumerate(kb_docs):
                 file_exists = 'file_path' in doc and os.path.exists(doc['file_path'])
-                with st.expander(f"{doc['filename']} - 上传于 {doc.get('uploaded_at', '未知时间')}", expanded=False, key=f"doc_{i}"):
+                # 移除 expander 的 key 参数
+                with st.expander(f"{doc['filename']} - 上传于 {doc.get('uploaded_at', '未知时间')}", expanded=False):
                     col1, col2 = st.columns([3, 1])
                     with col1:
                         st.write(f"**文件路径:** `{doc.get('file_path', '未记录')}`")
@@ -509,7 +515,8 @@ elif page == "知识库内容":
                     
                     with col2:
                         # 删除按钮
-                        if st.button("删除此文档", key=f"del_kb_{i}"):
+                        delete_key = f"del_kb_{doc.get('id', i)}_{i}"
+                        if st.button("删除此文档", key=delete_key):
                             try:
                                 # 删除物理文件
                                 if file_exists:
@@ -523,24 +530,28 @@ elif page == "知识库内容":
                                     st.session_state.kb.rebuild_index()
                                 
                                 st.success("文档已删除，知识库索引已更新！")
-                                st.experimental_rerun()
-                            except Exception as e:
-                                st.error(f"删除失败: {str(e)}")
+                                st.rerun()
+                            except Exception as delete_error:
+                                st.error(f"删除失败: {str(delete_error)}")
+                                st.text(traceback.format_exc())
                     
                     # 显示文件预览
                     if file_exists:
                         try:
-                            preview = DocumentProcessor.get_file_preview(doc['file_path'])
+                            preview = st.session_state.document_processor.get_file_preview(doc['file_path'])
                             st.subheader("文件预览")
+                            # 为 text_area 添加唯一的 key
                             st.text_area("", value=preview, height=300, 
-                                        key=f"preview_{i}", disabled=True)
-                        except Exception as e:
-                            st.error(f"预览失败: {str(e)}")
+                                        key=f"preview_{doc.get('id', i)}", disabled=True)
+                        except Exception as preview_error:
+                            st.error(f"预览失败: {str(preview_error)}")
+                            st.text(traceback.format_exc())
                     else:
                         st.warning("文件不存在，无法预览")
                     
                     # 重建索引按钮
-                    if st.button("重建此文档索引", key=f"reindex_{i}"):
+                    reindex_key = f"reindex_{doc.get('id', i)}_{i}"
+                    if st.button("重建此文档索引", key=reindex_key):
                         with st.spinner("重建索引中..."):
                             try:
                                 # 重新添加文件到知识库
@@ -549,38 +560,43 @@ elif page == "知识库内容":
                                     st.success("文档索引已重建！")
                                 else:
                                     st.error("文件不存在，无法重建索引")
-                            except Exception as e:
-                                st.error(f"重建索引失败: {str(e)}")
+                            except Exception as reindex_error:
+                                st.error(f"重建索引失败: {str(reindex_error)}")
+                                st.text(traceback.format_exc())
     
-    except Exception as e:
-        st.error(f"加载知识库内容失败: {str(e)}")
-        # 添加 traceback 导入检查
-        import traceback
+    except Exception as main_error:
+        st.error(f"加载知识库内容失败: {str(main_error)}")
         st.text(traceback.format_exc())
+
+# 数据库状态检查
+st.sidebar.markdown("---")
+st.sidebar.subheader("数据库状态")
+try:
+    # 检查知识库文件表是否存在
+    conn = st.session_state.db._get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_files'")
+    table_exists = cursor.fetchone() is not None
+    st.sidebar.write(f"知识库文件表: {'存在' if table_exists else '不存在'}")
     
-    # 数据库状态检查
-    st.sidebar.subheader("数据库状态")
-    try:
-        # 检查知识库文件表是否存在
-        conn = st.session_state.db._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_files'")
-        table_exists = cursor.fetchone() is not None
-        st.sidebar.write(f"知识库文件表: {'存在' if table_exists else '不存在'}")
+    # 检查知识库文件数量
+    if table_exists:
+        cursor.execute("SELECT COUNT(*) FROM knowledge_files")
+        count = cursor.fetchone()[0]
+        st.sidebar.write(f"知识库文件记录: {count}")
+    
+    # 检查文件目录中的实际文件数量
+    kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
+    if os.path.exists(kb_files_dir):
+        files = os.listdir(kb_files_dir)
+        st.sidebar.write(f"实际知识库文件: {len(files)}")
+    else:
+        st.sidebar.write("实际知识库文件: 目录不存在")
         
-        # 检查知识库文件数量
-        if table_exists:
-            cursor.execute("SELECT COUNT(*) FROM knowledge_files")
-            count = cursor.fetchone()[0]
-            st.sidebar.write(f"知识库文件记录: {count}")
-        
-        # 检查文件目录中的实际文件数量
-        kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
-        if os.path.exists(kb_files_dir):
-            files = os.listdir(kb_files_dir)
-            st.sidebar.write(f"实际知识库文件: {len(files)}")
-    except Exception as e:
-        st.sidebar.error(f"数据库检查失败: {str(e)}")# 添加一些样式
+except Exception as db_check_error:
+    st.sidebar.error(f"数据库检查失败: {str(db_check_error)}")
+
+# 添加一些样式
 st.markdown("""
 <style>
     .stExpander {
