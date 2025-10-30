@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 import traceback
 
+
 # 设置基础路径
 BASE_DIR = "E:/sm-ai"
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -104,8 +105,7 @@ if page == "生成测试用例":
     # 文件上传
     uploaded_file = st.file_uploader("上传 Word 或 PDF 需求文档", type=["docx", "pdf"])
     
-    # 提示词输入
-    
+    # 移除提示词配置部分
     
     if st.button("生成测试用例") and uploaded_file:
         # 保存文件并读取内容
@@ -125,7 +125,8 @@ if page == "生成测试用例":
         progress_bar.progress(5)
         status_text.text("阶段1/3: 生成文档总结...")
         try:
-            summary = st.session_state.ai_client.generate_summary(doc_text, summary_prompt)
+            # 使用内置提示词，不传递用户输入的提示词
+            summary = st.session_state.ai_client.generate_summary(doc_text, "")
         except Exception as summary_error:
             st.error(f"生成总结失败: {str(summary_error)}")
             st.stop()
@@ -152,9 +153,10 @@ if page == "生成测试用例":
         progress_bar.progress(50)
         status_text.text("阶段2/3: 生成决策表...")
         try:
+            # 使用内置提示词，只传递需求分析验证报告
             decision_table = st.session_state.ai_client.generate_decision_table(
                 requirement_analysis, 
-                f"{decision_prompt}\n需求分析验证报告：{analysis_report}"
+                f"需求分析验证报告：{analysis_report}"
             )
         except Exception as decision_error:
             st.error(f"决策表生成失败: {str(decision_error)}")
@@ -168,10 +170,11 @@ if page == "生成测试用例":
         progress_bar.progress(75)
         status_text.text("阶段3/3: 生成测试用例...")
         try:
+            # 使用内置提示词，不传递用户输入的提示词
             test_cases, test_validation = st.session_state.ai_client.generate_test_cases(
                 decision_table, 
                 doc_text, 
-                testcase_prompt
+                ""  # 空字符串，使用内置提示词
             )
         except Exception as testcase_error:
             st.error(f"测试用例生成失败: {str(testcase_error)}")
@@ -242,6 +245,23 @@ elif page == "历史记录":
     if not records:
         st.info("暂无历史记录")
     else:
+        # 处理删除操作
+        if 'delete_record_id' in st.session_state:
+            record_id = st.session_state.delete_record_id
+            try:
+                success = st.session_state.db.delete_record(record_id)
+                if success:
+                    st.success(f"已删除记录 ID: {record_id}")
+                    # 清除删除状态
+                    del st.session_state.delete_record_id
+                    # 重新加载页面
+                    st.rerun()
+                else:
+                    st.error("删除记录失败")
+            except Exception as delete_error:
+                st.error(f"删除记录时出错: {str(delete_error)}")
+                st.text(traceback.format_exc())
+        
         # 添加清空选择按钮
         if 'selected_record' in st.session_state:
             if st.button("清除选择"):
@@ -288,10 +308,12 @@ elif page == "历史记录":
                     if st.button(f"查看完整记录", key=btn_key):
                         st.session_state.selected_record = record['id']
                     
-                    # 删除按钮 - 新增功能
+                    # 删除按钮 - 修复后的功能
                     delete_key = f"delete_{record['id']}"
                     if st.button(f"删除记录", key=delete_key, type="secondary"):
                         st.session_state.delete_record_id = record['id']
+                        # 立即触发重新运行以执行删除
+                        st.rerun()
                 
                 # 如果选择了查看详情，显示完整内容
                 if 'selected_record' in st.session_state and st.session_state.selected_record == record['id']:
@@ -303,43 +325,7 @@ elif page == "历史记录":
                         st.text_area("", record.get('test_cases', '无测试用例信息'), 
                                     height=300, key=f"testcases_{record['id']}", disabled=True)
                 
-                # 删除确认对话框
-                if 'delete_record_id' in st.session_state and st.session_state.delete_record_id == record['id']:
-                    st.warning(f"确定要删除记录 '{record['original_filename']}' 吗？此操作将同时删除数据库记录和生成的Excel文件，且无法恢复！")
-                    
-                    col_confirm1, col_confirm2 = st.columns(2)
-                    with col_confirm1:
-                        if st.button("确认删除", key=f"confirm_delete_{record['id']}", type="primary"):
-                            try:
-                                # 删除物理文件
-                                if os.path.exists(record['output_path']):
-                                    os.remove(record['output_path'])
-                                    st.success(f"已删除文件: {record['output_path']}")
-                                
-                                # 删除数据库记录
-                                # 注意：需要在 Database 类中添加 delete_record 方法
-                                # 如果没有该方法，我们需要先添加
-                                success = st.session_state.db.delete_record(record['id'])
-                                
-                                if success:
-                                    st.success("记录已成功删除！")
-                                    # 清除删除状态
-                                    del st.session_state.delete_record_id
-                                    # 刷新页面
-                                    st.rerun()
-                                else:
-                                    st.error("删除数据库记录失败")
-                            except Exception as delete_error:
-                                st.error(f"删除失败: {str(delete_error)}")
-                    
-                    with col_confirm2:
-                        if st.button("取消", key=f"cancel_delete_{record['id']}"):
-                            # 清除删除状态
-                            del st.session_state.delete_record_id
-                            st.rerun()
-                
                 st.divider()  # 添加分隔线
-
 elif page == "知识库管理":
     st.title("知识库管理")
     
