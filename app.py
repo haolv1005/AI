@@ -84,19 +84,19 @@ st.sidebar.title("导航")
 page = st.sidebar.radio("选择页面", ["生成测试用例", "历史记录", "知识库管理", "知识库内容"])
 
 # 显示路径信息
-st.sidebar.subheader("系统信息")
-st.sidebar.write(f"数据目录: {DATA_DIR}")
-st.sidebar.write(f"数据库路径: {DB_PATH}")
-st.sidebar.write(f"上传目录: {os.path.join(DATA_DIR, 'uploads')}")
-st.sidebar.write(f"输出目录: {os.path.join(DATA_DIR, 'outputs')}")
-st.sidebar.write(f"知识库目录: {os.path.join(DATA_DIR, 'knowledge_base')}")
+# st.sidebar.subheader("系统信息")
+# st.sidebar.write(f"数据目录: {DATA_DIR}")
+# st.sidebar.write(f"数据库路径: {DB_PATH}")
+# st.sidebar.write(f"上传目录: {os.path.join(DATA_DIR, 'uploads')}")
+# st.sidebar.write(f"输出目录: {os.path.join(DATA_DIR, 'outputs')}")
+# st.sidebar.write(f"知识库目录: {os.path.join(DATA_DIR, 'knowledge_base')}")
 
-# 检查目录是否存在
-st.sidebar.write("目录状态:")
-st.sidebar.write(f"- 上传目录: {'存在' if os.path.exists(os.path.join(DATA_DIR, 'uploads')) else '不存在'}")
-st.sidebar.write(f"- 输出目录: {'存在' if os.path.exists(os.path.join(DATA_DIR, 'outputs')) else '不存在'}")
-st.sidebar.write(f"- 知识库目录: {'存在' if os.path.exists(os.path.join(DATA_DIR, 'knowledge_base')) else '不存在'}")
-st.sidebar.write(f"- 数据库文件: {'存在' if os.path.exists(DB_PATH) else '不存在'}")
+# # 检查目录是否存在
+# st.sidebar.write("目录状态:")
+# st.sidebar.write(f"- 上传目录: {'存在' if os.path.exists(os.path.join(DATA_DIR, 'uploads')) else '不存在'}")
+# st.sidebar.write(f"- 输出目录: {'存在' if os.path.exists(os.path.join(DATA_DIR, 'outputs')) else '不存在'}")
+# st.sidebar.write(f"- 知识库目录: {'存在' if os.path.exists(os.path.join(DATA_DIR, 'knowledge_base')) else '不存在'}")
+# st.sidebar.write(f"- 数据库文件: {'存在' if os.path.exists(DB_PATH) else '不存在'}")
 
 if page == "生成测试用例":
     st.title("AI 测试用例生成系统")
@@ -105,14 +105,7 @@ if page == "生成测试用例":
     uploaded_file = st.file_uploader("上传 Word 或 PDF 需求文档", type=["docx", "pdf"])
     
     # 提示词输入
-    st.subheader("提示词配置")
-    col1, col2 = st.columns(2)
-    with col1:
-        summary_prompt = st.text_area("总结提示词", value="请总结文档的主要内容，提取关键功能点和业务规则。")
-        analysis_prompt = st.text_area("需求分析提示词", value="请基于文档总结，应用等价类划分和边界值分析方法生成需求分析点。")
-    with col2:
-        decision_prompt = st.text_area("决策表提示词", value="根据需求分析点生成测试决策表，包含所有可能的输入组合和预期输出。")
-        testcase_prompt = st.text_area("测试用例提示词", value="根据决策表生成详细的测试用例，包含测试步骤、预期结果和优先级。")
+    
     
     if st.button("生成测试用例") and uploaded_file:
         # 保存文件并读取内容
@@ -256,10 +249,9 @@ elif page == "历史记录":
         
         for record in records:
             with st.container():
-                st.subheader(f"{record['original_filename']} - {record['created_at']}")
-                
-                col1, col2 = st.columns([2, 1])
+                col1, col2 = st.columns([3, 1])
                 with col1:
+                    st.subheader(f"{record['original_filename']} - {record['created_at']}")
                     st.write(f"**原始文件:** {record['original_filename']}")
                     st.write(f"**生成时间:** {record['created_at']}")
                     
@@ -295,6 +287,11 @@ elif page == "历史记录":
                     btn_key = f"detail_{record['id']}"
                     if st.button(f"查看完整记录", key=btn_key):
                         st.session_state.selected_record = record['id']
+                    
+                    # 删除按钮 - 新增功能
+                    delete_key = f"delete_{record['id']}"
+                    if st.button(f"删除记录", key=delete_key, type="secondary"):
+                        st.session_state.delete_record_id = record['id']
                 
                 # 如果选择了查看详情，显示完整内容
                 if 'selected_record' in st.session_state and st.session_state.selected_record == record['id']:
@@ -305,6 +302,41 @@ elif page == "历史记录":
                     with st.expander("测试用例详情", expanded=True):
                         st.text_area("", record.get('test_cases', '无测试用例信息'), 
                                     height=300, key=f"testcases_{record['id']}", disabled=True)
+                
+                # 删除确认对话框
+                if 'delete_record_id' in st.session_state and st.session_state.delete_record_id == record['id']:
+                    st.warning(f"确定要删除记录 '{record['original_filename']}' 吗？此操作将同时删除数据库记录和生成的Excel文件，且无法恢复！")
+                    
+                    col_confirm1, col_confirm2 = st.columns(2)
+                    with col_confirm1:
+                        if st.button("确认删除", key=f"confirm_delete_{record['id']}", type="primary"):
+                            try:
+                                # 删除物理文件
+                                if os.path.exists(record['output_path']):
+                                    os.remove(record['output_path'])
+                                    st.success(f"已删除文件: {record['output_path']}")
+                                
+                                # 删除数据库记录
+                                # 注意：需要在 Database 类中添加 delete_record 方法
+                                # 如果没有该方法，我们需要先添加
+                                success = st.session_state.db.delete_record(record['id'])
+                                
+                                if success:
+                                    st.success("记录已成功删除！")
+                                    # 清除删除状态
+                                    del st.session_state.delete_record_id
+                                    # 刷新页面
+                                    st.rerun()
+                                else:
+                                    st.error("删除数据库记录失败")
+                            except Exception as delete_error:
+                                st.error(f"删除失败: {str(delete_error)}")
+                    
+                    with col_confirm2:
+                        if st.button("取消", key=f"cancel_delete_{record['id']}"):
+                            # 清除删除状态
+                            del st.session_state.delete_record_id
+                            st.rerun()
                 
                 st.divider()  # 添加分隔线
 
@@ -570,31 +602,31 @@ elif page == "知识库内容":
 
 # 数据库状态检查
 st.sidebar.markdown("---")
-st.sidebar.subheader("数据库状态")
-try:
-    # 检查知识库文件表是否存在
-    conn = st.session_state.db._get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_files'")
-    table_exists = cursor.fetchone() is not None
-    st.sidebar.write(f"知识库文件表: {'存在' if table_exists else '不存在'}")
+# st.sidebar.subheader("数据库状态")
+# try:
+#     # 检查知识库文件表是否存在
+#     conn = st.session_state.db._get_connection()
+#     cursor = conn.cursor()
+#     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_files'")
+#     table_exists = cursor.fetchone() is not None
+#     st.sidebar.write(f"知识库文件表: {'存在' if table_exists else '不存在'}")
     
-    # 检查知识库文件数量
-    if table_exists:
-        cursor.execute("SELECT COUNT(*) FROM knowledge_files")
-        count = cursor.fetchone()[0]
-        st.sidebar.write(f"知识库文件记录: {count}")
+#     # 检查知识库文件数量
+#     if table_exists:
+#         cursor.execute("SELECT COUNT(*) FROM knowledge_files")
+#         count = cursor.fetchone()[0]
+#         st.sidebar.write(f"知识库文件记录: {count}")
     
-    # 检查文件目录中的实际文件数量
-    kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
-    if os.path.exists(kb_files_dir):
-        files = os.listdir(kb_files_dir)
-        st.sidebar.write(f"实际知识库文件: {len(files)}")
-    else:
-        st.sidebar.write("实际知识库文件: 目录不存在")
+#     # 检查文件目录中的实际文件数量
+#     kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
+#     if os.path.exists(kb_files_dir):
+#         files = os.listdir(kb_files_dir)
+#         st.sidebar.write(f"实际知识库文件: {len(files)}")
+#     else:
+#         st.sidebar.write("实际知识库文件: 目录不存在")
         
-except Exception as db_check_error:
-    st.sidebar.error(f"数据库检查失败: {str(db_check_error)}")
+# except Exception as db_check_error:
+#     st.sidebar.error(f"数据库检查失败: {str(db_check_error)}")
 
 # 添加一些样式
 st.markdown("""

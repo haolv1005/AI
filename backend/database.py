@@ -225,3 +225,29 @@ class Database:
                 print(f"删除物理文件失败: {str(e)}")
         
         return True
+    def delete_record(self, record_id: int):
+        """删除记录及其相关文件"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        # 先获取文件路径
+        cursor.execute("SELECT output_path FROM records WHERE id = ?", (record_id,))
+        result = cursor.fetchone()
+        if not result:
+            return False
+        
+        output_path = result[0]
+        
+        # 删除记录
+        cursor.execute("DELETE FROM records WHERE id = ?", (record_id,))
+        
+        conn.commit()
+        
+        # 尝试删除输出文件
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except Exception as e:
+                print(f"删除输出文件失败: {str(e)}")
+        
+        return True
