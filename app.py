@@ -84,154 +84,272 @@ if 'initialized' not in st.session_state:
 st.sidebar.title("导航")
 page = st.sidebar.radio("选择页面", ["生成测试用例", "历史记录", "知识库管理", "知识库内容"])
 
-# 显示路径信息
-# st.sidebar.subheader("系统信息")
-# st.sidebar.write(f"数据目录: {DATA_DIR}")
-# st.sidebar.write(f"数据库路径: {DB_PATH}")
-# st.sidebar.write(f"上传目录: {os.path.join(DATA_DIR, 'uploads')}")
-# st.sidebar.write(f"输出目录: {os.path.join(DATA_DIR, 'outputs')}")
-# st.sidebar.write(f"知识库目录: {os.path.join(DATA_DIR, 'knowledge_base')}")
-
-# # 检查目录是否存在
-# st.sidebar.write("目录状态:")
-# st.sidebar.write(f"- 上传目录: {'存在' if os.path.exists(os.path.join(DATA_DIR, 'uploads')) else '不存在'}")
-# st.sidebar.write(f"- 输出目录: {'存在' if os.path.exists(os.path.join(DATA_DIR, 'outputs')) else '不存在'}")
-# st.sidebar.write(f"- 知识库目录: {'存在' if os.path.exists(os.path.join(DATA_DIR, 'knowledge_base')) else '不存在'}")
-# st.sidebar.write(f"- 数据库文件: {'存在' if os.path.exists(DB_PATH) else '不存在'}")
-
 if page == "生成测试用例":
-    st.title("AI 测试用例生成系统")
+    st.title("AI 测试用例生成系统 - 分步生成")
+    
+    # 初始化会话状态
+    if 'generation_step' not in st.session_state:
+        st.session_state.generation_step = 0  # 0: 未开始, 1: 总结, 2: 需求分析, 3: 决策表, 4: 测试用例
+    if 'doc_text' not in st.session_state:
+        st.session_state.doc_text = ""
+    if 'current_summary' not in st.session_state:
+        st.session_state.current_summary = ""
+    if 'current_requirement_analysis' not in st.session_state:
+        st.session_state.current_requirement_analysis = ""
+    if 'current_analysis_report' not in st.session_state:
+        st.session_state.current_analysis_report = ""
+    if 'current_decision_table' not in st.session_state:
+        st.session_state.current_decision_table = ""
+    if 'current_test_cases' not in st.session_state:
+        st.session_state.current_test_cases = ""
+    if 'current_test_validation' not in st.session_state:
+        st.session_state.current_test_validation = ""
     
     # 文件上传
     uploaded_file = st.file_uploader("上传 Word 或 PDF 需求文档", type=["docx", "pdf"])
     
-    # 移除提示词配置部分
+    if uploaded_file and st.session_state.generation_step == 0:
+        if st.button("开始生成流程", key="start_generation"):
+            try:
+                # 保存文件并读取内容
+                file_path = save_uploaded_file(uploaded_file)
+                st.info(f"文件已保存到: {file_path}")
+                st.session_state.doc_text = st.session_state.document_processor.read_file(file_path)
+                st.session_state.file_path = file_path
+                st.session_state.original_filename = uploaded_file.name
+                st.session_state.generation_step = 1
+                st.rerun()
+            except Exception as file_error:
+                st.error(f"文件处理失败: {str(file_error)}")
     
-    if st.button("生成测试用例") and uploaded_file:
-        # 保存文件并读取内容
-        try:
-            file_path = save_uploaded_file(uploaded_file)
-            st.info(f"文件已保存到: {file_path}")
-            doc_text = st.session_state.document_processor.read_file(file_path)
-        except Exception as file_error:
-            st.error(f"文件处理失败: {str(file_error)}")
-            st.stop()
+    # 第一步：生成文档总结
+    if st.session_state.generation_step >= 1:
+        st.header("第一步：文档总结")
         
-        # 进度显示
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        if st.session_state.current_summary == "":
+            with st.spinner("正在生成文档总结..."):
+                try:
+                    st.session_state.current_summary = st.session_state.ai_client.generate_summary_step(
+                        st.session_state.doc_text
+                    )
+                    st.success("文档总结生成完成！")
+                except Exception as summary_error:
+                    st.error(f"生成总结失败: {str(summary_error)}")
+                    st.stop()
         
-        # 阶段1: 文档总结与需求分析
-        progress_bar.progress(5)
-        status_text.text("阶段1/3: 生成文档总结...")
-        try:
-            # 使用内置提示词，不传递用户输入的提示词
-            summary = st.session_state.ai_client.generate_summary(doc_text, "")
-        except Exception as summary_error:
-            st.error(f"生成总结失败: {str(summary_error)}")
-            st.stop()
+        # 可编辑的总结区域
+        st.subheader("文档总结（可编辑）")
+        edited_summary = st.text_area(
+            "编辑文档总结",
+            value=st.session_state.current_summary,
+            height=300,
+            key="summary_editor"
+        )
         
-        progress_bar.progress(25)
-        status_text.text("阶段1/3: 生成需求分析点...")
-        try:
-            requirement_analysis, analysis_report = st.session_state.ai_client.generate_requirement_analysis(summary)
-        except Exception as analysis_error:
-            st.error(f"需求分析失败: {str(analysis_error)}")
-            st.stop()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("重新生成总结", type="secondary", key="regenerate_summary"):
+                st.session_state.current_summary = ""
+                st.rerun()
+        with col2:
+            if st.button("确认总结并进入下一步", type="primary", key="confirm_summary"):
+                st.session_state.current_summary = edited_summary
+                st.session_state.generation_step = 2
+                st.rerun()
+    
+    # 第二步：生成需求分析
+    if st.session_state.generation_step >= 2:
+        st.header("第二步：需求分析")
         
-        # 显示阶段1结果
-        with st.expander("文档总结", expanded=True):
-            st.write(summary)
+        if st.session_state.current_requirement_analysis == "":
+            with st.spinner("正在生成需求分析..."):
+                try:
+                    requirement_analysis, analysis_report = st.session_state.ai_client.generate_requirement_analysis_step(
+                        st.session_state.current_summary
+                    )
+                    st.session_state.current_requirement_analysis = requirement_analysis
+                    st.session_state.current_analysis_report = analysis_report
+                    st.success("需求分析生成完成！")
+                except Exception as analysis_error:
+                    st.error(f"需求分析失败: {str(analysis_error)}")
+                    st.stop()
         
-        with st.expander("需求分析点", expanded=True):
-            st.write(requirement_analysis)
+        # 可编辑的需求分析区域
+        st.subheader("需求分析点（可编辑）")
+        edited_requirement_analysis = st.text_area(
+            "编辑需求分析点",
+            value=st.session_state.current_requirement_analysis,
+            height=300,
+            key="requirement_analysis_editor"
+        )
         
-        with st.expander("需求分析验证报告", expanded=True):
-            st.write(analysis_report)
-        
-        # 阶段2: 决策表生成
-        progress_bar.progress(50)
-        status_text.text("阶段2/3: 生成决策表...")
-        try:
-            # 使用内置提示词，只传递需求分析验证报告
-            decision_table = st.session_state.ai_client.generate_decision_table(
-                requirement_analysis, 
-                f"需求分析验证报告：{analysis_report}"
+        # 显示验证报告（只读）
+        with st.expander("需求分析验证报告", expanded=False):
+            st.text_area(
+                "验证报告",
+                value=st.session_state.current_analysis_report,
+                height=200,
+                key="analysis_report_viewer",
+                disabled=True
             )
-        except Exception as decision_error:
-            st.error(f"决策表生成失败: {str(decision_error)}")
-            st.stop()
         
-        # 显示阶段2结果
-        with st.expander("决策表", expanded=True):
-            st.write(decision_table)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("返回上一步", type="secondary", key="back_to_step1"):
+                st.session_state.generation_step = 1
+                st.rerun()
+        with col2:
+            if st.button("重新生成分析", type="secondary", key="regenerate_analysis"):
+                st.session_state.current_requirement_analysis = ""
+                st.session_state.current_analysis_report = ""
+                st.rerun()
+        with col3:
+            if st.button("确认分析并进入下一步", type="primary", key="confirm_analysis"):
+                st.session_state.current_requirement_analysis = edited_requirement_analysis
+                st.session_state.generation_step = 3
+                st.rerun()
+    
+    # 第三步：生成决策表
+    if st.session_state.generation_step >= 3:
+        st.header("第三步：决策表生成")
         
-        # 阶段3: 测试用例生成
-        progress_bar.progress(75)
-        status_text.text("阶段3/3: 生成测试用例...")
-        try:
-            # 使用内置提示词，不传递用户输入的提示词
-            test_cases, test_validation = st.session_state.ai_client.generate_test_cases(
-                decision_table, 
-                doc_text, 
-                ""  # 空字符串，使用内置提示词
+        if st.session_state.current_decision_table == "":
+            with st.spinner("正在生成决策表..."):
+                try:
+                    st.session_state.current_decision_table = st.session_state.ai_client.generate_decision_table_step(
+                        st.session_state.current_requirement_analysis
+                    )
+                    st.success("决策表生成完成！")
+                except Exception as decision_error:
+                    st.error(f"决策表生成失败: {str(decision_error)}")
+                    st.stop()
+        
+        # 可编辑的决策表区域
+        st.subheader("决策表（可编辑）")
+        edited_decision_table = st.text_area(
+            "编辑决策表",
+            value=st.session_state.current_decision_table,
+            height=300,
+            key="decision_table_editor"
+        )
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("返回上一步", type="secondary", key="back_to_step2"):
+                st.session_state.generation_step = 2
+                st.rerun()
+        with col2:
+            if st.button("重新生成决策表", type="secondary", key="regenerate_decision"):
+                st.session_state.current_decision_table = ""
+                st.rerun()
+        with col3:
+            if st.button("确认决策表并进入下一步", type="primary", key="confirm_decision"):
+                st.session_state.current_decision_table = edited_decision_table
+                st.session_state.generation_step = 4
+                st.rerun()
+    
+    # 第四步：生成测试用例
+    if st.session_state.generation_step >= 4:
+        st.header("第四步：测试用例生成")
+        
+        if st.session_state.current_test_cases == "":
+            with st.spinner("正在生成测试用例..."):
+                try:
+                    test_cases, test_validation = st.session_state.ai_client.generate_test_cases_step(
+                        st.session_state.current_decision_table,
+                        st.session_state.doc_text
+                    )
+                    st.session_state.current_test_cases = test_cases
+                    st.session_state.current_test_validation = test_validation
+                    st.success("测试用例生成完成！")
+                except Exception as testcase_error:
+                    st.error(f"测试用例生成失败: {str(testcase_error)}")
+                    st.stop()
+        
+        # 可编辑的测试用例区域
+        st.subheader("测试用例（可编辑）")
+        edited_test_cases = st.text_area(
+            "编辑测试用例",
+            value=st.session_state.current_test_cases,
+            height=400,
+            key="test_cases_editor"
+        )
+        
+        # 显示验证报告（只读）
+        with st.expander("测试用例验证报告", expanded=False):
+            st.text_area(
+                "验证报告",
+                value=st.session_state.current_test_validation,
+                height=200,
+                key="test_validation_viewer",
+                disabled=True
             )
-        except Exception as testcase_error:
-            st.error(f"测试用例生成失败: {str(testcase_error)}")
-            st.stop()
         
-        progress_bar.progress(95)
-        status_text.text("阶段3/3: 验证测试用例...")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("返回上一步", type="secondary", key="back_to_step3"):
+                st.session_state.generation_step = 3
+                st.rerun()
+        with col2:
+            if st.button("重新生成测试用例", type="secondary", key="regenerate_testcases"):
+                st.session_state.current_test_cases = ""
+                st.session_state.current_test_validation = ""
+                st.rerun()
+        with col3:
+            if st.button("完成并生成Excel", type="primary", key="finish_and_generate"):
+                st.session_state.current_test_cases = edited_test_cases
+                
+                # 生成 Excel 文件
+                try:
+                    output_path = st.session_state.testcase_gen.generate_excel(
+                        st.session_state.current_test_cases, 
+                        st.session_state.original_filename
+                    )
+                    st.success(f"Excel 文件已生成: {output_path}")
+                    
+                    # 保存记录到数据库
+                    try:
+                        record_id = st.session_state.db.add_record(
+                            original_filename=st.session_state.original_filename,
+                            file_path=st.session_state.file_path,
+                            output_filename=os.path.basename(output_path),
+                            output_path=output_path,
+                            summary=st.session_state.current_summary,
+                            requirement_analysis=st.session_state.current_requirement_analysis,
+                            decision_table=st.session_state.current_decision_table,
+                            test_cases=st.session_state.current_test_cases,
+                            test_validation=st.session_state.current_test_validation
+                        )
+                        st.info(f"记录已保存到数据库，ID: {record_id}")
+                    except Exception as db_error:
+                        st.warning(f"保存记录失败: {str(db_error)}")
+                    
+                    # 提供下载链接
+                    if os.path.exists(output_path):
+                        with open(output_path, "rb") as f:
+                            st.download_button(
+                                label="下载 Excel 测试用例",
+                                data=f,
+                                file_name=os.path.basename(output_path),
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="download_excel_final"
+                            )
+                    else:
+                        st.error(f"Excel文件未找到: {output_path}")
+                        
+                except Exception as excel_error:
+                    st.error(f"生成 Excel 文件失败: {str(excel_error)}")
         
-        # 显示阶段3结果
-        with st.expander("测试用例", expanded=True):
-            st.write(test_cases)
-        
-        with st.expander("测试用例验证报告", expanded=True):
-            st.write(test_validation)
-        
-        # 生成 Excel 文件
-        try:
-            output_path = st.session_state.testcase_gen.generate_excel(test_cases, uploaded_file.name)
-            st.success(f"Excel 文件已生成: {output_path}")
-        except Exception as excel_error:
-            st.error(f"生成 Excel 文件失败: {str(excel_error)}")
-            st.stop()
-        
-        # 保存记录到数据库
-        try:
-            record_id = st.session_state.db.add_record(
-                original_filename=uploaded_file.name,
-                file_path=file_path,
-                output_filename=os.path.basename(output_path),
-                output_path=output_path,
-                summary=summary,
-                requirement_analysis=requirement_analysis,
-                decision_table=decision_table,
-                test_cases=test_cases,
-                test_validation=test_validation
-            )
-            st.info(f"记录已保存到数据库，ID: {record_id}")
-        except Exception as db_error:
-            st.warning(f"保存记录失败: {str(db_error)}")
-        
-        # 完成状态
-        progress_bar.progress(100)
-        status_text.text("流程完成！")
-        st.success("✅ 测试用例生成完成！")
-        
-        # 提供下载链接
-        if os.path.exists(output_path):
-            with open(output_path, "rb") as f:
-                st.download_button(
-                    label="下载 Excel 测试用例",
-                    data=f,
-                    file_name=os.path.basename(output_path),
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_excel"
-                )
-        else:
-            st.error(f"Excel文件未找到: {output_path}")
+        # 重置流程按钮
+        st.markdown("---")
+        if st.button("重新开始新流程", type="secondary", key="reset_workflow"):
+            for key in ['generation_step', 'doc_text', 'current_summary', 'current_requirement_analysis', 
+                       'current_analysis_report', 'current_decision_table', 'current_test_cases', 
+                       'current_test_validation', 'file_path', 'original_filename']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.success("流程已重置，可以开始新的生成了！")
+            st.rerun()
 
 elif page == "历史记录":
     st.title("历史生成记录")
@@ -264,7 +382,7 @@ elif page == "历史记录":
         
         # 添加清空选择按钮
         if 'selected_record' in st.session_state:
-            if st.button("清除选择"):
+            if st.button("清除选择", key="clear_selection"):
                 del st.session_state.selected_record
         
         for record in records:
@@ -326,11 +444,12 @@ elif page == "历史记录":
                                     height=300, key=f"testcases_{record['id']}", disabled=True)
                 
                 st.divider()  # 添加分隔线
+
 elif page == "知识库管理":
     st.title("知识库管理")
     
     # 重建索引按钮
-    if st.button("完全重建知识库索引", type="secondary"):
+    if st.button("完全重建知识库索引", type="secondary", key="rebuild_index"):
         with st.spinner("重建整个知识库索引中..."):
             try:
                 success = st.session_state.kb.rebuild_index()
@@ -358,8 +477,8 @@ elif page == "知识库管理":
     
     # 知识库搜索测试
     st.subheader("知识库检索测试")
-    test_query = st.text_input("输入测试查询", "用户登录功能，包含管理员和普通用户角色")
-    if st.button("测试知识库引用"):
+    test_query = st.text_input("输入测试查询", "用户登录功能，包含管理员和普通用户角色", key="test_query_input")
+    if st.button("测试知识库引用", key="test_kb_search"):
         try:
             # 执行知识库搜索
             knowledge_results = st.session_state.kb.search(test_query, k=3)
@@ -380,10 +499,11 @@ elif page == "知识库管理":
     st.subheader("上传知识文件")
     knowledge_file = st.file_uploader(
         "上传 Excel、CSV 或文本文件到知识库", 
-        type=["csv", "xlsx", "xls", "txt", "docx", "pdf"]
+        type=["csv", "xlsx", "xls", "txt", "docx", "pdf"],
+        key="kb_file_uploader"
     )
     
-    if knowledge_file and st.button("上传到知识库"):
+    if knowledge_file and st.button("上传到知识库", key="upload_to_kb"):
         with st.spinner("上传并处理文件中..."):
             try:
                 # 保存文件到知识库目录
@@ -504,7 +624,6 @@ elif page == "知识库内容":
                 if files:
                     st.warning("警告：文件系统中有知识库文件，但知识库索引中没有记录")
                     for i, filename in enumerate(files):
-                        # 移除 expander 的 key 参数
                         with st.expander(f"{filename} - (未在知识库索引中)"):
                             st.write(f"文件路径: {os.path.join(kb_files_dir, filename)}")
                             if st.button("添加到知识库索引", key=f"add_to_index_{filename}"):
@@ -524,7 +643,6 @@ elif page == "知识库内容":
             
             for i, doc in enumerate(kb_docs):
                 file_exists = 'file_path' in doc and os.path.exists(doc['file_path'])
-                # 移除 expander 的 key 参数
                 with st.expander(f"{doc['filename']} - 上传于 {doc.get('uploaded_at', '未知时间')}", expanded=False):
                     col1, col2 = st.columns([3, 1])
                     with col1:
@@ -558,7 +676,6 @@ elif page == "知识库内容":
                         try:
                             preview = st.session_state.document_processor.get_file_preview(doc['file_path'])
                             st.subheader("文件预览")
-                            # 为 text_area 添加唯一的 key
                             st.text_area("", value=preview, height=300, 
                                         key=f"preview_{doc.get('id', i)}", disabled=True)
                         except Exception as preview_error:
@@ -585,34 +702,6 @@ elif page == "知识库内容":
     except Exception as main_error:
         st.error(f"加载知识库内容失败: {str(main_error)}")
         st.text(traceback.format_exc())
-
-# 数据库状态检查
-st.sidebar.markdown("---")
-# st.sidebar.subheader("数据库状态")
-# try:
-#     # 检查知识库文件表是否存在
-#     conn = st.session_state.db._get_connection()
-#     cursor = conn.cursor()
-#     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_files'")
-#     table_exists = cursor.fetchone() is not None
-#     st.sidebar.write(f"知识库文件表: {'存在' if table_exists else '不存在'}")
-    
-#     # 检查知识库文件数量
-#     if table_exists:
-#         cursor.execute("SELECT COUNT(*) FROM knowledge_files")
-#         count = cursor.fetchone()[0]
-#         st.sidebar.write(f"知识库文件记录: {count}")
-    
-#     # 检查文件目录中的实际文件数量
-#     kb_files_dir = os.path.join(DATA_DIR, "knowledge_base", "files")
-#     if os.path.exists(kb_files_dir):
-#         files = os.listdir(kb_files_dir)
-#         st.sidebar.write(f"实际知识库文件: {len(files)}")
-#     else:
-#         st.sidebar.write("实际知识库文件: 目录不存在")
-        
-# except Exception as db_check_error:
-#     st.sidebar.error(f"数据库检查失败: {str(db_check_error)}")
 
 # 添加一些样式
 st.markdown("""

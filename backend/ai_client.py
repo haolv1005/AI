@@ -3,6 +3,9 @@ from typing import List, Dict, Tuple, Optional
 import re
 import traceback
 import datetime
+import jieba  # 需要安装: pip install jieba
+import os
+
 class AIClient:
     def __init__(self, model_name="deepseek-coder-v2", base_url="http://localhost:11434/v1", knowledge_base=None):
         self.client = openai.OpenAI(
@@ -12,19 +15,28 @@ class AIClient:
         self.model_name = model_name
         self.default_max_tokens = 16384
         self.knowledge_base = knowledge_base
+        # 添加日志路径
+        self.log_path = "E:/sm-ai/data/ai_search_log.txt"
+        # 确保日志目录存在
+        os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
     
     def generate_text(self, messages: List[Dict[str, str]], temperature=0.7, max_tokens=16384) -> str:
         max_tokens = max_tokens or self.default_max_tokens
-        response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
-        return response.choices[0].message.content
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"AI生成失败: {str(e)}")
+            return f"生成失败: {str(e)}"
     
-    def generate_summary(self, text: str, prompt: str) -> str:
-        """生成文档总结（优化版）"""
+    # 第一步：生成文档总结
+    def generate_summary_step(self, text: str) -> str:
+        """第一步：生成文档总结"""
         system_content = """你是一个专业的软件测试分析师，请根据需求文档内容生成结构化摘要：
         1. **功能模块识别**：
         - 列出所有主要功能模块和子功能
@@ -39,8 +51,6 @@ class AIClient:
         - 用户角色矩阵：列出所有用户角色及其权限差异，识别跨角色交互场景
         - 数据流验证：描述关键数据输入/输出流程，提取数据验证规则
         - 非功能需求：提取性能/安全/兼容性要求，标注特殊测试类型
-
-        4. **知识库整合**：关联知识库中相似功能的历史测试点
 
         请使用以下格式组织摘要：
         [功能模块1]
@@ -58,12 +68,13 @@ class AIClient:
 
         messages = [
             {"role": "system", "content": system_content},
-            {"role": "user", "content": f"文档内容：{text}\n附加要求：{prompt}"}
+            {"role": "user", "content": f"文档内容：{text}"}
         ]
         return self.generate_text(messages)
     
-    def generate_requirement_analysis(self, summary: str) -> Tuple[str, str]:
-        """生成需求分析点并进行验证（优化版）"""
+    # 第二步：生成需求分析点
+    def generate_requirement_analysis_step(self, summary: str) -> Tuple[str, str]:
+        """第二步：生成需求分析点并进行验证"""
         # 生成需求分析点
         analysis_content = """您作为资深测试分析师，请执行：
         1. 基于文档总结，归纳所有测试点
@@ -105,21 +116,16 @@ class AIClient:
         
         return requirement_analysis, validation_report
 
-
-        
-
-    def generate_decision_table(self, requirement_analysis: str, prompt: str) -> str:
-        """生成决策表，整合知识库内容"""
+    # 第三步：生成决策表
+    def generate_decision_table_step(self, requirement_analysis: str) -> str:
+        """第三步：生成决策表，整合知识库内容"""
         # 检索知识库
         knowledge_context = ""
         if self.knowledge_base:
             try:
-                # 从需求分析中提取关键词 - 改进版本
                 keywords = self._extract_keywords_from_analysis(requirement_analysis)
-                
-                # 使用关键词搜索知识库
                 search_query = " ".join(keywords[:3]) if keywords else requirement_analysis[:100]
-                print(f"搜索知识库的关键词: {search_query}")  # 调试信息
+                print(f"搜索知识库的关键词: {search_query}")
                 
                 knowledge_results = self.knowledge_base.search(search_query, k=3)
                 
@@ -133,11 +139,11 @@ class AIClient:
                     
             except Exception as e:
                 knowledge_context = f"知识库检索出错: {str(e)}"
-                print(f"知识库检索错误: {e}")  # 调试信息
+                print(f"知识库检索错误: {e}")
         else:
             knowledge_context = "未配置知识库。"
         
-        # 改进的决策表生成提示词
+        # 决策表生成提示词
         system_content = """您作为高级测试架构师，请基于需求分析点生成测试决策表：
 
         请严格按照以下格式生成表格：
@@ -156,17 +162,18 @@ class AIClient:
 
         messages = [
             {"role": "system", "content": system_content},
-            {"role": "user", "content": f"需求分析点：{requirement_analysis}\n{knowledge_context}\n附加要求：{prompt}"}
+            {"role": "user", "content": f"需求分析点：{requirement_analysis}\n{knowledge_context}"}
         ]
         
-        print("正在生成决策表...")  # 调试信息
+        print("正在生成决策表...")
         result = self.generate_text(messages)
-        print(f"决策表生成完成，长度: {len(result)}")  # 调试信息
+        print(f"决策表生成完成，长度: {len(result)}")
         
         return result
     
-    def generate_test_cases(self, decision_table: str, requirement_text: str, prompt: str) -> Tuple[str, str]:
-        """生成测试用例并验证（优化版）"""
+    # 第四步：生成测试用例
+    def generate_test_cases_step(self, decision_table: str, requirement_text: str) -> Tuple[str, str]:
+        """第四步：生成测试用例并验证"""
         # 生成测试用例
         testcase_content = """您作为资深测试工程师，请根据决策表生成测试用例：
         1. **用例结构**：
@@ -190,7 +197,7 @@ class AIClient:
 
         testcase_messages = [
             {"role": "system", "content": testcase_content},
-            {"role": "user", "content": f"决策表：{decision_table}\n附加要求：{prompt}"}
+            {"role": "user", "content": f"决策表：{decision_table}"}
         ]
         test_cases = self.generate_text(testcase_messages)
         
@@ -216,9 +223,6 @@ class AIClient:
         ]
         validation_report = self.generate_text(validation_messages)
         
-        # 提取补充用例并合并（保持不变）...
-        #return test_cases, validation_report
-        
         # 提取补充用例并合并
         if "[补充用例]" in validation_report:
             supplement_start = validation_report.index("[补充用例]") + len("[补充用例]")
@@ -226,12 +230,27 @@ class AIClient:
             test_cases += "\n\n" + supplement
         
         return test_cases, validation_report
-    
 
-        
+    # 保留原有方法以保持兼容性
+    def generate_summary(self, text: str, prompt: str) -> str:
+        """生成文档总结（兼容旧版本）"""
+        return self.generate_summary_step(text)
+    
+    def generate_requirement_analysis(self, summary: str) -> Tuple[str, str]:
+        """生成需求分析点并进行验证（兼容旧版本）"""
+        return self.generate_requirement_analysis_step(summary)
+    
+    def generate_decision_table(self, requirement_analysis: str, prompt: str) -> str:
+        """生成决策表，整合知识库内容（兼容旧版本）"""
+        return self.generate_decision_table_step(requirement_analysis)
+    
+    def generate_test_cases(self, decision_table: str, requirement_text: str, prompt: str) -> Tuple[str, str]:
+        """生成测试用例并验证（兼容旧版本）"""
+        return self.generate_test_cases_step(decision_table, requirement_text)
+
+    # 辅助方法
     def _extract_keywords_from_analysis(self, analysis_text: str) -> List[str]:
-        """从需求分析中提取关键词 - 改进版本"""
-        # 改进的模式匹配
+        """从需求分析中提取关键词"""
         patterns = [
             r'FP\d+',                    # 功能点编号
             r'[A-Za-z\u4e00-\u9fa5]+登录', # 登录相关（支持中文）
@@ -247,22 +266,38 @@ class AIClient:
             matches = re.findall(pattern, analysis_text)
             keywords.extend(matches)
         
-        # 添加基于分词的关键词提取（如果analysis_text包含中文）
-        import jieba  # 需要安装: pip install jieba
-        words = jieba.cut(analysis_text)
-        for word in words:
-            if len(word) >= 2 and any(char not in '的了吗呢吧啊' for char in word):
-                keywords.append(word)
+        # 添加基于分词的关键词提取
+        try:
+            words = jieba.cut(analysis_text)
+            for word in words:
+                if len(word) >= 2 and any(char not in '的了吗呢吧啊' for char in word):
+                    keywords.append(word)
+        except Exception as e:
+            print(f"分词失败: {str(e)}")
+            # 如果分词失败，使用简单的空格分割
+            words = analysis_text.split()
+            for word in words:
+                if len(word) >= 2:
+                    keywords.append(word)
         
-        return list(set(keywords))  # 去重
+        return list(set(keywords))
+    
+    def _write_log(self, log_msg: str):
+        """写入日志文件"""
+        try:
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write(log_msg + "\n" + "-" * 80 + "\n\n")
+        except Exception as e:
+            print(f"写入日志失败: {str(e)}")
+    
     def enhanced_search(self, query: str) -> List[Tuple[str, Dict]]:
         """增强型搜索，结合向量搜索和AI重新排序"""
         if not self.knowledge_base:
             return []
         
         try:
-            # 记录搜索日志 - 这是第四步的核心功能
-            log_msg = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 搜索查询: {query}\n"
+            # 记录搜索日志
+            log_msg = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 搜索查询: {query}\n"
             
             # 1. 扩展短查询（少于3个字符）
             if len(query) < 3:
@@ -284,6 +319,8 @@ class AIClient:
                 log_msg += "未找到基础搜索结果\n"
                 self._write_log(log_msg)
                 return []
+            
+            # 3. AI重新排序结果
             reranked_results = self.rerank_results(query, results)
             log_msg += f"重排序后结果数: {len(reranked_results)}\n"
             
@@ -301,25 +338,57 @@ class AIClient:
             error_msg = f"AI增强搜索失败: {str(e)}\n{traceback.format_exc()}"
             self._write_log(error_msg)
             print(error_msg)
-            return []    
-            # 3. AI重新排序结果
-    def _write_log(self, log_msg: str):
-            """写入日志文件"""
-            try:
-                with open(self.log_path, "a", encoding="utf-8") as f:
-                    f.write(log_msg + "\n" + "-" * 80 + "\n\n")
-            except Exception as e:
-                print(f"写入日志失败: {str(e)}")
-            
-            except Exception as e:
-                error_msg = f"AI增强搜索失败: {str(e)}\n{traceback.format_exc()}"
-                self._write_log(error_msg)
-                print(error_msg)
-                return []
+            return []
+    
+    def expand_short_query(self, query: str) -> str:
+        """扩展短查询"""
+        expansion_prompt = f"请扩展这个简短的搜索查询，使其更具体和详细：'{query}'"
+        messages = [
+            {"role": "system", "content": "你是一个搜索查询优化助手，请将简短的查询扩展为更具体、详细的搜索查询。"},
+            {"role": "user", "content": expansion_prompt}
+        ]
+        return self.generate_text(messages)
+    
+    def rerank_results(self, query: str, results: List[Tuple[str, Dict]]) -> List[Tuple[str, Dict]]:
+        """使用AI重新排序搜索结果"""
+        if not results:
+            return []
         
-            except Exception as e:
-                print(f"AI增强搜索失败: {str(e)}")
-                return []
+        # 构建重排序提示
+        results_text = ""
+        for i, (content, metadata) in enumerate(results):
+            source = metadata.get('source', '未知来源')
+            results_text += f"{i+1}. 来源: {source}\n内容: {content[:200]}...\n\n"
+        
+        rerank_prompt = f"""请根据查询内容重新排序以下搜索结果，只返回最相关的3个结果的编号（用逗号分隔）：
+        
+        查询：{query}
+        
+        搜索结果：
+        {results_text}
+        
+        请只返回最相关的3个结果的编号，例如：2,5,1"""
+        
+        messages = [
+            {"role": "system", "content": "你是一个搜索结果重排序助手，请根据查询相关性对结果进行排序。"},
+            {"role": "user", "content": rerank_prompt}
+        ]
+        
+        response = self.generate_text(messages)
+        ranked_indices = self._parse_rerank_response(response, k=3, max_index=len(results))
+        
+        # 根据AI排序返回结果
+        reranked_results = []
+        for idx in ranked_indices:
+            if idx < len(results):
+                reranked_results.append(results[idx])
+        
+        # 如果AI排序失败，返回原始结果的前3个
+        if not reranked_results:
+            reranked_results = results[:3]
+        
+        return reranked_results
+    
     def _parse_rerank_response(self, response: str, k: int, max_index: int) -> List[int]:
         """解析AI的重新排序响应"""
         import re
