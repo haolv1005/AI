@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 import traceback
 
-
 # 设置基础路径
 BASE_DIR = "E:/sm-ai"
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -124,23 +123,23 @@ if page == "生成测试用例":
     
     # 第一步：生成文档总结
     if st.session_state.generation_step >= 1:
-        st.header("第一步：文档总结")
+        st.header("第一步：需求文档分析")
         
         if st.session_state.current_summary == "":
-            with st.spinner("正在生成文档总结..."):
+            with st.spinner("正在进行全面的需求文档分析..."):
                 try:
-                    st.session_state.current_summary = st.session_state.ai_client.generate_summary_step(
+                    st.session_state.current_summary = st.session_state.ai_client.enhanced_generate_summary_step(
                         st.session_state.doc_text
                     )
-                    st.success("文档总结生成完成！")
+                    st.success("需求文档分析完成！")
                 except Exception as summary_error:
-                    st.error(f"生成总结失败: {str(summary_error)}")
+                    st.error(f"需求分析失败: {str(summary_error)}")
                     st.stop()
         
         # 可编辑的总结区域
-        st.subheader("文档总结（可编辑）")
+        st.subheader("需求文档分析（可编辑）")
         edited_summary = st.text_area(
-            "编辑文档总结",
+            "编辑需求文档分析",
             value=st.session_state.current_summary,
             height=300,
             key="summary_editor"
@@ -148,43 +147,43 @@ if page == "生成测试用例":
         
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("重新生成总结", type="secondary", key="regenerate_summary"):
+            if st.button("重新生成分析", type="secondary", key="regenerate_summary"):
                 st.session_state.current_summary = ""
                 st.rerun()
         with col2:
-            if st.button("确认总结并进入下一步", type="primary", key="confirm_summary"):
+            if st.button("确认分析并进入下一步", type="primary", key="confirm_summary"):
                 st.session_state.current_summary = edited_summary
                 st.session_state.generation_step = 2
                 st.rerun()
     
-    # 第二步：生成需求分析
+    # 第二步：生成测试点文档
     if st.session_state.generation_step >= 2:
-        st.header("第二步：需求分析")
+        st.header("第二步：测试点文档生成")
         
         if st.session_state.current_requirement_analysis == "":
-            with st.spinner("正在生成需求分析..."):
+            with st.spinner("正在生成测试点文档..."):
                 try:
-                    requirement_analysis, analysis_report = st.session_state.ai_client.generate_requirement_analysis_step(
+                    test_points, analysis_report = st.session_state.ai_client.enhanced_generate_test_points_step(
                         st.session_state.current_summary
                     )
-                    st.session_state.current_requirement_analysis = requirement_analysis
+                    st.session_state.current_requirement_analysis = test_points
                     st.session_state.current_analysis_report = analysis_report
-                    st.success("需求分析生成完成！")
+                    st.success("测试点文档生成完成！")
                 except Exception as analysis_error:
-                    st.error(f"需求分析失败: {str(analysis_error)}")
+                    st.error(f"测试点生成失败: {str(analysis_error)}")
                     st.stop()
         
-        # 可编辑的需求分析区域
-        st.subheader("需求分析点（可编辑）")
+        # 可编辑的测试点文档区域
+        st.subheader("测试点文档（可编辑）")
         edited_requirement_analysis = st.text_area(
-            "编辑需求分析点",
+            "编辑测试点文档",
             value=st.session_state.current_requirement_analysis,
             height=300,
             key="requirement_analysis_editor"
         )
         
         # 显示验证报告（只读）
-        with st.expander("需求分析验证报告", expanded=False):
+        with st.expander("测试点验证报告", expanded=False):
             st.text_area(
                 "验证报告",
                 value=st.session_state.current_analysis_report,
@@ -199,12 +198,12 @@ if page == "生成测试用例":
                 st.session_state.generation_step = 1
                 st.rerun()
         with col2:
-            if st.button("重新生成分析", type="secondary", key="regenerate_analysis"):
+            if st.button("重新生成测试点", type="secondary", key="regenerate_analysis"):
                 st.session_state.current_requirement_analysis = ""
                 st.session_state.current_analysis_report = ""
                 st.rerun()
         with col3:
-            if st.button("确认分析并进入下一步", type="primary", key="confirm_analysis"):
+            if st.button("确认测试点并进入下一步", type="primary", key="confirm_analysis"):
                 st.session_state.current_requirement_analysis = edited_requirement_analysis
                 st.session_state.generation_step = 3
                 st.rerun()
@@ -214,9 +213,9 @@ if page == "生成测试用例":
         st.header("第三步：决策表生成")
         
         if st.session_state.current_decision_table == "":
-            with st.spinner("正在生成决策表..."):
+            with st.spinner("正在生成测试决策表..."):
                 try:
-                    st.session_state.current_decision_table = st.session_state.ai_client.generate_decision_table_step(
+                    st.session_state.current_decision_table = st.session_state.ai_client.enhanced_generate_decision_table_step(
                         st.session_state.current_requirement_analysis
                     )
                     st.success("决策表生成完成！")
@@ -253,11 +252,11 @@ if page == "生成测试用例":
         st.header("第四步：测试用例生成")
         
         if st.session_state.current_test_cases == "":
-            with st.spinner("正在生成测试用例..."):
+            with st.spinner("正在生成详细测试用例..."):
                 try:
-                    test_cases, test_validation = st.session_state.ai_client.generate_test_cases_step(
+                    test_cases, test_validation = st.session_state.ai_client.enhanced_generate_test_cases_step(
                         st.session_state.current_decision_table,
-                        st.session_state.doc_text
+                        st.session_state.current_requirement_analysis
                     )
                     st.session_state.current_test_cases = test_cases
                     st.session_state.current_test_validation = test_validation
@@ -394,12 +393,12 @@ elif page == "历史记录":
                     st.write(f"**生成时间:** {record['created_at']}")
                     
                     # 使用文本区域显示内容
-                    st.write("**文档总结**")
-                    st.text_area("", record.get('summary', '无总结信息'), 
+                    st.write("**需求文档分析**")
+                    st.text_area("", record.get('summary', '无分析信息'), 
                                 height=100, key=f"summary_{record['id']}", disabled=True)
                     
-                    st.write("**需求分析点**")
-                    st.text_area("", record.get('requirement_analysis', '无需求分析信息'), 
+                    st.write("**测试点文档**")
+                    st.text_area("", record.get('requirement_analysis', '无测试点信息'), 
                                 height=100, key=f"analysis_{record['id']}", disabled=True)
                     
                     st.write("**测试用例验证报告**")

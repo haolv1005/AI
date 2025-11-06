@@ -231,6 +231,316 @@ class AIClient:
         
         return test_cases, validation_report
 
+    # 新增的增强方法
+    def enhanced_generate_summary_step(self, text: str) -> str:
+        """第一步：全面需求文档分析，不删减内容"""
+        system_content = """您是一个专业的软件测试分析师，请对需求文档进行全面分析，输出完整的结构化分析报告。
+
+要求：
+1. **完整保留原始需求**：不要删减任何需求内容，重新组织为更直观的结构
+2. **功能模块识别**：
+   - 列出所有功能模块和子功能
+   - 为每个功能标注业务重要性和测试优先级
+3. **测试关注点提取**：
+   - 输入参数：识别所有输入字段、参数、配置项
+   - 输出结果：识别所有输出、响应、界面变化
+   - 业务流程：识别关键业务流程和状态转换
+   - 数据规则：识别数据验证、计算逻辑、业务规则
+   - 用户角色：识别所有用户角色和权限差异
+
+输出格式：
+# 需求文档全面分析
+
+## 1. 文档概览
+- 文档类型：[需求规格/用户故事/产品文档]
+- 主要功能：[功能数量]个主要功能模块
+- 测试重点：[关键测试领域]
+
+## 2. 功能模块详细分析
+### 2.1 [功能模块1名称]
+- **功能描述**：[完整的功能说明]
+- **输入参数**：
+  ✓ 参数1：[类型][必选/可选][取值范围]
+  ✓ 参数2：[类型][必选/可选][取值范围]
+- **输出结果**：
+  ✓ 结果1：[预期输出]
+  ✓ 结果2：[预期输出]
+- **业务流程**：[步骤1] → [步骤2] → [步骤3]
+- **业务规则**：[条件判断逻辑]
+- **测试优先级**：[高/中/低]
+
+### 2.2 [功能模块2名称]
+...
+
+## 3. 测试关注点汇总
+### 3.1 功能测试点
+- [功能点1]：[具体测试关注内容]
+- [功能点2]：[具体测试关注内容]
+
+### 3.2 数据测试点  
+- [数据验证点1]：[验证规则]
+- [数据验证点2]：[验证规则]
+
+### 3.3 流程测试点
+- [流程场景1]：[场景描述]
+- [流程场景2]：[场景描述]"""
+
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": f"需求文档完整内容：{text}"}
+        ]
+        return self.generate_text(messages)
+
+    def enhanced_generate_test_points_step(self, summary: str) -> Tuple[str, str]:
+        """第二步：基于需求分析生成测试点文档"""
+        # 生成测试点
+        testpoint_content = """您作为资深测试工程师，请基于需求分析文档生成详细的测试点文档。
+
+要求：
+1. **测试点提取**：从需求分析中提取所有可测试的点
+2. **分类组织**：按功能、数据、流程、界面等维度分类
+3. **测试深度**：每个测试点要明确测试目的和验证内容
+4. **覆盖完整性**：确保覆盖所有需求模块
+
+输出格式：
+# 测试点文档
+
+## 1. 功能测试点
+### 1.1 [功能模块1]
+| 测试点ID | 测试点描述 | 测试目的 | 验证内容 | 优先级 |
+|----------|------------|----------|----------|--------|
+| TP-FUNC-001 | [具体测试点] | [测试目的] | [验证的具体内容] | 高 |
+| TP-FUNC-002 | [具体测试点] | [测试目的] | [验证的具体内容] | 中 |
+
+### 1.2 [功能模块2]
+...
+
+## 2. 数据测试点
+### 2.1 数据验证测试点
+| 测试点ID | 测试点描述 | 测试目的 | 验证内容 | 优先级 |
+|----------|------------|----------|----------|--------|
+| TP-DATA-001 | [数据验证点] | [验证数据规则] | [具体验证内容] | 高 |
+
+## 3. 流程测试点
+### 3.1 业务流程测试点
+| 测试点ID | 测试点描述 | 测试目的 | 验证内容 | 优先级 |
+|----------|------------|----------|----------|--------|
+| TP-FLOW-001 | [流程场景] | [验证流程正确性] | [流程验证点] | 高 |"""
+
+        testpoint_messages = [
+            {"role": "system", "content": testpoint_content},
+            {"role": "user", "content": f"需求分析文档：{summary}"}
+        ]
+        test_points = self.generate_text(testpoint_messages)
+        
+        # 验证测试点
+        validation_content = """作为测试架构师，请验证测试点文档：
+1. 检查是否覆盖所有需求模块
+2. 确认测试点的可测试性和明确性
+3. 检查优先级分配是否合理
+4. 标记遗漏的测试场景
+
+输出格式：
+[验证结果]
+覆盖率: [百分比]% (缺漏X处)
+问题列表:
+1. [模块]缺失[具体测试点]
+2. [测试点]描述不清晰
+...
+[改进建议]"""
+
+        validation_messages = [
+            {"role": "system", "content": validation_content},
+            {"role": "user", "content": f"需求分析：{summary}\n测试点文档：{test_points}"}
+        ]
+        validation_report = self.generate_text(validation_messages)
+        
+        return test_points, validation_report
+
+    def enhanced_generate_decision_table_step(self, test_points: str) -> str:
+        """第三步：基于测试点生成详细决策表"""
+        # 检索知识库获取测试设计经验
+        knowledge_context = ""
+        if self.knowledge_base:
+            try:
+                # 搜索测试设计相关的知识
+                search_query = "测试用例设计 等价类 边界值 决策表 测试场景"
+                knowledge_results = self.knowledge_base.search(search_query, k=3)
+                
+                if knowledge_results:
+                    knowledge_context = "测试设计知识库参考:\n"
+                    for i, (content, metadata) in enumerate(knowledge_results):
+                        source = metadata.get('source', '未知来源')
+                        knowledge_context += f"\n--- 参考 {i+1} ({source}) ---\n{content}\n"
+            except Exception as e:
+                knowledge_context = f"知识库检索出错: {str(e)}"
+        
+        system_content = """您作为测试设计专家，请基于测试点生成详细的测试决策表。
+
+要求：
+1. **决策表结构**：包含条件桩、动作桩和规则
+2. **条件覆盖**：每个测试点都要生成对应的条件组合
+3. **动作明确**：每个条件组合对应明确的预期动作
+4. **测试场景**：考虑正常、边界、异常各种场景
+
+输出格式：
+# 测试决策表
+
+## 决策表：[功能模块名称]
+
+### 条件桩
+- C1: [条件1描述]
+- C2: [条件2描述] 
+- C3: [条件3描述]
+
+### 动作桩
+- A1: [动作1描述]
+- A2: [动作2描述]
+- A3: [动作3描述]
+
+### 规则表
+| 规则ID | C1 | C2 | C3 | A1 | A2 | A3 | 测试场景描述 | 优先级 | 知识库参考 |
+|--------|----|----|----|----|----|----|-------------|--------|------------|
+| R001 | Y | Y | Y | √ | × | × | [场景描述] | P0 | [参考编号] |
+| R002 | Y | Y | N | √ | × | √ | [场景描述] | P1 | [参考编号] |
+| R003 | Y | N | Y | × | √ | × | [场景描述] | P2 | [参考编号] |
+
+说明：
+- Y/N: 条件成立/不成立
+- √/×: 执行/不执行该动作
+- 优先级: P0(核心场景)、P1(重要场景)、P2(一般场景)"""
+
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": f"测试点文档：{test_points}\n{knowledge_context}"}
+        ]
+        
+        return self.generate_text(messages)
+
+    def enhanced_generate_test_cases_step(self, decision_table: str, test_points: str) -> Tuple[str, str]:
+        """第四步：基于决策表和知识库生成详细测试用例"""
+        # 增强知识库检索
+        knowledge_context = self._enhanced_knowledge_search(decision_table, test_points)
+        
+        testcase_content = """您作为资深测试工程师，请基于决策表和知识库内容生成详细的测试用例。
+
+要求：
+1. **用例完整性**：为决策表中的每个规则生成多个测试用例
+2. **数据驱动**：使用不同的测试数据覆盖各种场景
+3. **知识库整合**：参考知识库中的测试经验补充测试场景
+4. **详细步骤**：测试步骤要具体、可执行
+
+输出格式：
+# 详细测试用例
+
+## 功能模块：[模块名称]
+
+### 测试场景：[场景描述]
+
+| 用例ID | 用例标题 | 前置条件 | 测试步骤 | 测试数据 | 预期结果 | 优先级 | 数据组合 | 知识库参考 |
+|--------|----------|----------|----------|----------|----------|--------|----------|------------|
+| TC-R001-01 | [具体用例标题] | [前置条件描述] | 1.[步骤1]<br>2.[步骤2] | [具体测试数据] | 1.[结果1]<br>2.[结果2] | P0 | [数据组合描述] | [参考编号] |
+| TC-R001-02 | [具体用例标题] | [前置条件描述] | 1.[步骤1]<br>2.[步骤2] | [具体测试数据] | 1.[结果1]<br>2.[结果2] | P0 | [数据组合描述] | [参考编号] |
+| TC-R002-01 | [具体用例标题] | [前置条件描述] | 1.[步骤1]<br>2.[步骤2] | [具体测试数据] | 1.[结果1]<br>2.[结果2] | P1 | [数据组合描述] | [参考编号] |
+
+说明：
+- 用例ID: TC-[规则ID]-[序号]
+- 数据组合: 描述使用的数据组合策略
+- 每个规则至少生成2-3个测试用例，覆盖不同数据场景"""
+
+        testcase_messages = [
+            {"role": "system", "content": testcase_content},
+            {"role": "user", "content": f"决策表：{decision_table}\n测试点文档：{test_points}\n{knowledge_context}"}
+        ]
+        test_cases = self.generate_text(testcase_messages)
+        
+        # 验证测试用例
+        validation_content = """作为测试质量专家，请验证测试用例：
+1. 检查用例是否覆盖所有决策表规则
+2. 确认测试数据的多样性和边界覆盖
+3. 验证预期结果的准确性和可验证性
+4. 检查知识库参考的合理性
+
+输出格式：
+[验证报告]
+用例数量: [总数]个
+规则覆盖率: [百分比]%
+数据覆盖分析:
+- 正常场景: [数量]个
+- 边界场景: [数量]个  
+- 异常场景: [数量]个
+缺失覆盖:
+1. [规则]缺少[场景类型]测试
+2. [功能]缺少[数据组合]测试
+[补充建议]"""
+
+        validation_messages = [
+            {"role": "system", "content": validation_content},
+            {"role": "user", "content": f"决策表：{decision_table}\n生成的测试用例：{test_cases}"}
+        ]
+        validation_report = self.generate_text(validation_messages)
+        
+        return test_cases, validation_report
+
+    def _enhanced_knowledge_search(self, decision_table: str, test_points: str) -> str:
+        """增强的知识库搜索，专门针对测试设计"""
+        if not self.knowledge_base:
+            return "未配置知识库"
+        
+        try:
+            # 提取关键词进行多轮搜索
+            search_queries = [
+                "测试用例设计 最佳实践",
+                "等价类划分 边界值分析",
+                "测试数据设计 组合测试",
+                "异常场景测试 错误处理"
+            ]
+            
+            # 从决策表和测试点中提取具体功能关键词
+            functional_keywords = self._extract_functional_keywords(decision_table + test_points)
+            if functional_keywords:
+                search_queries.extend(functional_keywords[:2])  # 添加具体功能相关的搜索
+            
+            knowledge_context = "知识库测试设计参考:\n"
+            all_results = []
+            
+            for query in search_queries:
+                try:
+                    results = self.knowledge_base.search(query, k=2)
+                    all_results.extend(results)
+                except Exception as e:
+                    print(f"搜索知识库失败 {query}: {str(e)}")
+            
+            # 去重并组织结果
+            seen_content = set()
+            for i, (content, metadata) in enumerate(all_results):
+                if content not in seen_content and len(seen_content) < 5:  # 最多5个不同结果
+                    seen_content.add(content)
+                    source = metadata.get('source', '未知来源')
+                    knowledge_context += f"\n--- 参考 {len(seen_content)} ({source}) ---\n{content[:300]}...\n"
+            
+            return knowledge_context
+            
+        except Exception as e:
+            return f"知识库检索出错: {str(e)}"
+
+    def _extract_functional_keywords(self, text: str) -> List[str]:
+        """从文本中提取功能相关的关键词"""
+        patterns = [
+            r'功能模块[：:]\s*([^\n]+)',
+            r'测试点[：:]\s*([^\n]+)', 
+            r'[功能|模块][：:]\s*([^\n]+)',
+            r'[A-Za-z\u4e00-\u9fa5]+功能',
+            r'[A-Za-z\u4e00-\u9fa5]+模块'
+        ]
+        
+        keywords = []
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            keywords.extend(matches)
+        
+        return list(set(keywords))[:5]  # 返回前5个唯一关键词
+
     # 保留原有方法以保持兼容性
     def generate_summary(self, text: str, prompt: str) -> str:
         """生成文档总结（兼容旧版本）"""
