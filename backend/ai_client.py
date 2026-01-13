@@ -402,3 +402,75 @@ class AIClient:
         
         # 生成答案
         return self.generate_text(messages, temperature=0.3, max_tokens=2048)
+    def generate_test_cases_from_test_points(self, test_points: str) -> Tuple[str, str]:
+        """
+        直接从测试点生成测试用例（跳过决策表步骤）
+        
+        Args:
+            test_points: 测试点文档
+            
+        Returns:
+            测试用例和验证报告
+        """
+        # 增强知识库检索
+        knowledge_context = self._enhanced_knowledge_search("", test_points)
+        
+        testcase_content = """您作为资深测试工程师，请基于测试点文档直接生成详细的测试用例。
+
+    要求：
+    1. **用例完整性**：为每个测试点生成多个测试用例
+    2. **数据驱动**：使用不同的测试数据覆盖各种场景
+    3. **知识库整合**：参考知识库中的测试经验补充测试场景
+    4. **详细步骤**：测试步骤要具体、可执行
+    5. **不需要决策表**：直接从测试点转换为测试用例
+
+    输出格式：
+    # 详细测试用例
+
+    ## 功能模块：[模块名称]
+
+    ### 测试点：[测试点描述]
+
+    | 用例ID | 用例标题 | 前置条件 | 测试步骤 | 测试数据 | 预期结果 | 优先级 |
+    |--------|----------|----------|----------|----------|----------|--------|
+    | TC-001-01 | [具体用例标题] | [前置条件描述] | 1.[步骤1]<br>2.[步骤2] | [具体测试数据] | 1.[结果1]<br>2.[结果2] | P0 |
+    | TC-001-02 | [具体用例标题] | [前置条件描述] | 1.[步骤1]<br>2.[步骤2] | [具体测试数据] | 1.[结果1]<br>2.[结果2] | P0 |
+
+    说明：
+    - 用例ID: TC-[测试点编号]-[序号]
+    - 每个测试点至少生成2-3个测试用例，覆盖不同数据场景
+    - 优先级: P0(核心场景)、P1(重要场景)、P2(一般场景)"""
+
+        testcase_messages = [
+            {"role": "system", "content": testcase_content},
+            {"role": "user", "content": f"测试点文档：{test_points}\n{knowledge_context}"}
+        ]
+        test_cases = self.generate_text(testcase_messages)
+        
+        # 验证测试用例
+        validation_content = """作为测试质量专家，请验证测试用例：
+    1. 检查用例是否覆盖所有测试点
+    2. 确认测试数据的多样性和边界覆盖
+    3. 验证预期结果的准确性和可验证性
+    4. 检查知识库参考的合理性
+
+    输出格式：
+    [验证报告]
+    用例数量: [总数]个
+    测试点覆盖率: [百分比]%
+    数据覆盖分析:
+    - 正常场景: [数量]个
+    - 边界场景: [数量]个  
+    - 异常场景: [数量]个
+    缺失覆盖:
+    1. [测试点]缺少[场景类型]测试
+    2. [功能]缺少[数据组合]测试
+    [补充建议]"""
+
+        validation_messages = [
+            {"role": "system", "content": validation_content},
+            {"role": "user", "content": f"测试点文档：{test_points}\n生成的测试用例：{test_cases}"}
+        ]
+        validation_report = self.generate_text(validation_messages)
+        
+        return test_cases, validation_report
