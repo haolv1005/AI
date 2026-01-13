@@ -15,10 +15,6 @@ class AIClient:
         self.model_name = model_name
         self.default_max_tokens = 16384
         self.knowledge_base = knowledge_base
-        # 添加日志路径
-        self.log_path = "E:/sm-ai/data/ai_search_log.txt"
-        # 确保日志目录存在
-        os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
     
     def generate_text(self, messages: List[Dict[str, str]], temperature=0.7, max_tokens=16384) -> str:
         max_tokens = max_tokens or self.default_max_tokens
@@ -35,256 +31,44 @@ class AIClient:
             return f"生成失败: {str(e)}"
     
     # 第一步：生成文档总结
-    def generate_summary_step(self, text: str) -> str:
-        """第一步：生成文档总结"""
-        system_content = """你是一个专业的软件测试分析师，请根据需求文档内容生成结构化摘要：
-        1. **功能模块识别**：
-        - 列出所有主要功能模块和子功能
-        - 标注每个功能的测试优先级（高/中/低）
-
-        2. **测试点深度分析**：
-        - 等价类划分：为每个输入参数明确划分有效/无效等价类
-        - 边界值提取：识别所有边界条件（最小值/最大值/空值），列出具体边界值
-        - 业务规则：解析所有条件判断逻辑（如：如果...则...）
-
-        3. **多维验证要素**：
-        - 用户角色矩阵：列出所有用户角色及其权限差异，识别跨角色交互场景
-        - 数据流验证：描述关键数据输入/输出流程，提取数据验证规则
-        - 非功能需求：提取性能/安全/兼容性要求，标注特殊测试类型
-
-        请使用以下格式组织摘要：
-        [功能模块1]
-        - 功能描述: [简洁说明]
-        - 等价类: 
-        ✓ 有效: [类名1] 值范围[范围说明]
-        ✓ 无效: [类名2] 值范围[范围说明]
-        - 边界值: 
-        ✓ 最小值: [具体值]
-        ✓ 最大值: [具体值]
-        ✓ 特殊值: [空值/零值/越界值]
-        - 业务规则: [条件判断逻辑]
-        - 测试优先级: [高/中/低]
-        [功能模块2]..."""
-
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": f"文档内容：{text}"}
-        ]
-        return self.generate_text(messages)
-    
-    # 第二步：生成需求分析点
-    def generate_requirement_analysis_step(self, summary: str) -> Tuple[str, str]:
-        """第二步：生成需求分析点并进行验证"""
-        # 生成需求分析点
-        analysis_content = """您作为资深测试分析师，请执行：
-        1. 基于文档总结，归纳所有测试点
-        2. 应用等价类划分法：明确每个功能模块的有效/无效等价类
-        3. 应用边界值法：提取所有边界条件（最小值/最大值/特殊值）
-
-        结构化输出格式：
-        | 功能点ID | 功能描述 | 等价类 | 边界值 | 业务规则 |
-        |---|---|---|---|---|
-        | FP001 | [描述] | 有效: [范围]<br>无效: [范围] | 最小值: [值]<br>最大值: [值] | [规则描述] |"""
-
-        analysis_messages = [
-            {"role": "system", "content": analysis_content},
-            {"role": "user", "content": f"文档总结：{summary}"}
-        ]
-        requirement_analysis = self.generate_text(analysis_messages)
-        
-        # 验证需求分析点
-        validation_content = """作为质量保障专家，请验证需求分析点：
-        1. 检查是否有遗漏的功能点
-        2. 确认边界值是否完整（含所有极端情况）
-        3. 检查等价类划分是否覆盖所有输入场景
-        4. 标记不明确/冲突点：[编号]问题描述
-
-        输出格式：
-        [验证结果]
-        完整度: [百分比]% (缺漏X处)
-        问题列表:
-        1. [模块]缺失[具体功能]
-        2. [参数]边界值未包含[值]
-        ...
-        [修订建议]"""
-
-        validation_messages = [
-            {"role": "system", "content": validation_content},
-            {"role": "user", "content": f"原始总结：{summary}\n需求分析点：{requirement_analysis}"}
-        ]
-        validation_report = self.generate_text(validation_messages)
-        
-        return requirement_analysis, validation_report
-
-    # 第三步：生成决策表
-    def generate_decision_table_step(self, requirement_analysis: str) -> str:
-        """第三步：生成决策表，整合知识库内容"""
-        # 检索知识库
-        knowledge_context = ""
-        if self.knowledge_base:
-            try:
-                keywords = self._extract_keywords_from_analysis(requirement_analysis)
-                search_query = " ".join(keywords[:3]) if keywords else requirement_analysis[:100]
-                print(f"搜索知识库的关键词: {search_query}")
-                
-                knowledge_results = self.knowledge_base.search(search_query, k=3)
-                
-                if knowledge_results:
-                    knowledge_context = "相关知识库内容:\n"
-                    for i, (content, metadata) in enumerate(knowledge_results):
-                        source = metadata.get('source', '未知来源')
-                        knowledge_context += f"\n--- 参考 {i+1} ({source}) ---\n{content}\n"
-                else:
-                    knowledge_context = "知识库中没有找到相关内容。"
-                    
-            except Exception as e:
-                knowledge_context = f"知识库检索出错: {str(e)}"
-                print(f"知识库检索错误: {e}")
-        else:
-            knowledge_context = "未配置知识库。"
-        
-        # 决策表生成提示词
-        system_content = """您作为高级测试架构师，请基于需求分析点生成测试决策表：
-
-        请严格按照以下格式生成表格：
-
-        | 组合ID | 功能点 | 等价类 | 边界状态 | 用户角色 | 预期动作 | 优先级 | 知识库参考 |
-        |---|---|---|---|---|---|---|---|
-        | 1 | FP001 | 有效 | 正常 | 管理员 | 成功处理 | P0 | KB-001 |
-        | 2 | FP001 | 有效 | 边界 | 管理员 | 成功处理 | P1 | KB-001 |
-        | 3 | FP001 | 无效 | 越界 | 管理员 | 显示错误 | P2 | KB-002 |
-
-        生成要求：
-        1. 必须覆盖需求分析中的所有功能点
-        2. 每个功能点需要包含：有效/无效等价类，正常/边界/越界状态
-        3. 优先级定义：P0(核心功能)、P1(重要功能)、P2(一般功能)
-        4. 如果有知识库参考，请标注对应的知识库条目"""
-
-        messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": f"需求分析点：{requirement_analysis}\n{knowledge_context}"}
-        ]
-        
-        print("正在生成决策表...")
-        result = self.generate_text(messages)
-        print(f"决策表生成完成，长度: {len(result)}")
-        
-        return result
-    
-    # 第四步：生成测试用例
-    def generate_test_cases_step(self, decision_table: str, requirement_text: str) -> Tuple[str, str]:
-        """第四步：生成测试用例并验证"""
-        # 生成测试用例
-        testcase_content = """您作为资深测试工程师，请根据决策表生成测试用例：
-        1. **用例结构**：
-        - 用例ID: [决策表ID]_[序号] (如：DT001_01)
-        - 用例标题: 功能点+等价类+边界状态组合
-        - 前置条件: 执行测试前的系统状态
-        - 测试步骤: 清晰、可执行的操作序列
-        - 测试数据: 具体输入值（必须包含边界值）
-        - 预期结果: 可验证的系统响应
-        - 优先级: 继承决策表的优先级 (P0/P1/P2)
-
-        2. **覆盖要求**：
-        - 每个决策表行至少生成1个测试用例
-        - 边界值测试必须包含：最小值/最大值/空值/零值/越界值
-        - 为每个无效等价类生成错误场景用例
-
-        输出格式（表格）：
-        | 用例ID | 用例标题 | 前置条件 | 测试步骤 | 测试数据 | 预期结果 | 优先级 | 关联决策 |
-        |---|---|---|---|---|---|---|---|
-        | DT001_01 | 登录-有效等价类-最小值测试 | 1.系统正常启动<br>2.测试账户已创建 | 1.打开功能页<br>2.输入最小值参数 | 年龄=0 | 1.成功处理<br>2.显示结果页 | P0 | DT-001 |"""
-
-        testcase_messages = [
-            {"role": "system", "content": testcase_content},
-            {"role": "user", "content": f"决策表：{decision_table}"}
-        ]
-        test_cases = self.generate_text(testcase_messages)
-        
-        # 验证测试用例
-        validation_content = """作为测试质量审核员，请验证测试用例：
-        1. 对比原始需求文档，检查是否有相悖点
-        2. 确认是否覆盖所有决策表条目
-        3. 检查边界值场景是否完整
-        4. 标记遗漏的需求点：[编号]需求描述
-
-        输出格式：
-        [验证结果]
-        覆盖率: [百分比]% (缺失X处)
-        冲突点列表:
-        1. [功能]与[需求编号]冲突
-        ...
-        [补充用例]
-        | 用例ID | 用例标题 | ... | (格式同测试用例表)"""
-
-        validation_messages = [
-            {"role": "system", "content": validation_content},
-            {"role": "user", "content": f"原始需求文档片段：{requirement_text[:1000]}...\n测试用例：{test_cases}"}
-        ]
-        validation_report = self.generate_text(validation_messages)
-        
-        # 提取补充用例并合并
-        if "[补充用例]" in validation_report:
-            supplement_start = validation_report.index("[补充用例]") + len("[补充用例]")
-            supplement = validation_report[supplement_start:].strip()
-            test_cases += "\n\n" + supplement
-        
-        return test_cases, validation_report
-
-    # 新增的增强方法
     def enhanced_generate_summary_step(self, text: str) -> str:
         """第一步：全面需求文档分析，不删减内容"""
-        system_content = """您是一个专业的软件测试分析师，请对需求文档进行全面分析，输出完整的结构化分析报告。
+        system_content = """作为专业软件测试分析师，请分析上传的需求文档，按以下结构化格式输出分析结果：
 
-要求：
-1. **完整保留原始需求**：不要删减任何需求内容，重新组织为更直观的结构
-2. **功能模块识别**：
-   - 列出所有功能模块和子功能
-   - 为每个功能标注业务重要性和测试优先级
-3. **测试关注点提取**：
-   - 输入参数：识别所有输入字段、参数、配置项
-   - 输出结果：识别所有输出、响应、界面变化
-   - 业务流程：识别关键业务流程和状态转换
-   - 数据规则：识别数据验证、计算逻辑、业务规则
-   - 用户角色：识别所有用户角色和权限差异
+        # [主功能模块名称]
 
-输出格式：
-# 需求文档全面分析
+        ## [子功能模块1名称]
+        **用户角色**：[主态/客态/游客/登录用户/管理员/房主等]
+        **场景分析**：
+        - **情况A**：[场景条件描述]
+        - 操作A：[具体操作] → 等价类：[有效/无效操作类型]
+        - 操作B：[具体操作] → 等价类：[有效/无效操作类型]
+        **边界值考虑**：[相关数据项的边界条件描述]
 
-## 1. 文档概览
-- 文档类型：[需求规格/用户故事/产品文档]
-- 主要功能：[功能数量]个主要功能模块
-- 测试重点：[关键测试领域]
+        ## [子功能模块2名称]
+        **用户角色**：[主态/客态/游客/登录用户/管理员/房主等]
+        **场景分析**：
+        - **情况B**：[场景条件描述]
+        - 操作C：[具体操作] → 等价类：[有效/无效操作类型]
+        - 操作D：[具体操作] → 等价类：[有效/无效操作类型]
+        **边界值考虑**：[相关数据项的边界条件描述]
 
-## 2. 功能模块详细分析
-### 2.1 [功能模块1名称]
-- **功能描述**：[完整的功能说明]
-- **输入参数**：
-  ✓ 参数1：[类型][必选/可选][取值范围]
-  ✓ 参数2：[类型][必选/可选][取值范围]
-- **输出结果**：
-  ✓ 结果1：[预期输出]
-  ✓ 结果2：[预期输出]
-- **业务流程**：[步骤1] → [步骤2] → [步骤3]
-- **业务规则**：[条件判断逻辑]
-- **测试优先级**：[高/中/低]
+        # [下一个主功能模块名称]
 
-### 2.2 [功能模块2名称]
-...
+        [...继续按上述模式分析...]
 
-## 3. 测试关注点汇总
-### 3.1 功能测试点
-- [功能点1]：[具体测试关注内容]
-- [功能点2]：[具体测试关注内容]
+        **分析要点：**
+        1. 识别所有主要功能模块和子模块，按层级组织
+        2. 明确每个功能模块涉及的用户角色类型
+        3. 针对每个子功能模块，分析不同的使用场景（情况）
+        4. 在每个场景下，识别可能的用户操作并标注等价类
+        5. 列出需要考虑边界值的数据项
 
-### 3.2 数据测试点  
-- [数据验证点1]：[验证规则]
-- [数据验证点2]：[验证规则]
-
-### 3.3 流程测试点
-- [流程场景1]：[场景描述]
-- [流程场景2]：[场景描述]"""
-
+        **术语说明：**
+        - 主态：内容创建者、功能发起方
+        - 客态：内容消费者、功能参与方
+        - 等价类：有效操作、无效操作、异常操作等类型
+        - 边界值：数据范围、数量限制、时间阈值等边界条件"""
         messages = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": f"需求文档完整内容：{text}"}
@@ -298,7 +82,7 @@ class AIClient:
 
 要求：
 1. **测试点提取**：从需求分析中提取所有可测试的点
-2. **分类组织**：按功能、数据、流程、界面等维度分类
+2. **不需要考虑的模块**：有关性能以及安全性测试的内容完全不需要
 3. **测试深度**：每个测试点要明确测试目的和验证内容
 4. **覆盖完整性**：确保覆盖所有需求模块
 
@@ -306,26 +90,16 @@ class AIClient:
 # 测试点文档
 
 ## 1. 功能测试点
-### 1.1 [功能模块1]
-| 测试点ID | 测试点描述 | 测试目的 | 验证内容 | 优先级 |
-|----------|------------|----------|----------|--------|
-| TP-FUNC-001 | [具体测试点] | [测试目的] | [验证的具体内容] | 高 |
-| TP-FUNC-002 | [具体测试点] | [测试目的] | [验证的具体内容] | 中 |
+### 1.1 [功能点一]
+| 测试点描述 | 验证内容 | 预期 |
+|------------|----------|--------|
+| [执行操作1] | [数值1] | 数值增加正确 |
+| [执行操作1] | [数值2] | 内容显示正确 |
 
-### 1.2 [功能模块2]
+### 1.2 [功能点二]
 ...
 
-## 2. 数据测试点
-### 2.1 数据验证测试点
-| 测试点ID | 测试点描述 | 测试目的 | 验证内容 | 优先级 |
-|----------|------------|----------|----------|--------|
-| TP-DATA-001 | [数据验证点] | [验证数据规则] | [具体验证内容] | 高 |
-
-## 3. 流程测试点
-### 3.1 业务流程测试点
-| 测试点ID | 测试点描述 | 测试目的 | 验证内容 | 优先级 |
-|----------|------------|----------|----------|--------|
-| TP-FLOW-001 | [流程场景] | [验证流程正确性] | [流程验证点] | 高 |"""
+"""
 
         testpoint_messages = [
             {"role": "system", "content": testpoint_content},
@@ -541,23 +315,6 @@ class AIClient:
         
         return list(set(keywords))[:5]  # 返回前5个唯一关键词
 
-    # 保留原有方法以保持兼容性
-    def generate_summary(self, text: str, prompt: str) -> str:
-        """生成文档总结（兼容旧版本）"""
-        return self.generate_summary_step(text)
-    
-    def generate_requirement_analysis(self, summary: str) -> Tuple[str, str]:
-        """生成需求分析点并进行验证（兼容旧版本）"""
-        return self.generate_requirement_analysis_step(summary)
-    
-    def generate_decision_table(self, requirement_analysis: str, prompt: str) -> str:
-        """生成决策表，整合知识库内容（兼容旧版本）"""
-        return self.generate_decision_table_step(requirement_analysis)
-    
-    def generate_test_cases(self, decision_table: str, requirement_text: str, prompt: str) -> Tuple[str, str]:
-        """生成测试用例并验证（兼容旧版本）"""
-        return self.generate_test_cases_step(decision_table, requirement_text)
-
     # 辅助方法
     def _extract_keywords_from_analysis(self, analysis_text: str) -> List[str]:
         """从需求分析中提取关键词"""
@@ -591,125 +348,57 @@ class AIClient:
                     keywords.append(word)
         
         return list(set(keywords))
-    
-    def _write_log(self, log_msg: str):
-        """写入日志文件"""
-        try:
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(log_msg + "\n" + "-" * 80 + "\n\n")
-        except Exception as e:
-            print(f"写入日志失败: {str(e)}")
-    
-    def enhanced_search(self, query: str) -> List[Tuple[str, Dict]]:
-        """增强型搜索，结合向量搜索和AI重新排序"""
-        if not self.knowledge_base:
-            return []
+    def answer_with_knowledge(self, question: str, context_texts: List[str]) -> str:
+        """
+        基于选定的知识库内容回答问题
         
-        try:
-            # 记录搜索日志
-            log_msg = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 搜索查询: {query}\n"
+        Args:
+            question: 用户问题
+            context_texts: 选定的相关知识文本列表
             
-            # 1. 扩展短查询（少于3个字符）
-            if len(query) < 3:
-                expanded_query = self.expand_short_query(query)
-                log_msg += f"扩展后查询: {expanded_query}\n"
-            else:
-                expanded_query = query
-            
-            # 2. 向量相似度搜索
-            results = self.knowledge_base.search(expanded_query, k=10)
-            log_msg += f"基础搜索结果数: {len(results)}\n"
-            
-            # 记录前3个搜索结果的内容摘要
-            for i, (content, metadata) in enumerate(results[:3]):
-                source = metadata.get('source', '未知来源')
-                log_msg += f"结果 {i+1} (来源: {source}): {content[:100]}...\n"
-            
-            if not results:
-                log_msg += "未找到基础搜索结果\n"
-                self._write_log(log_msg)
-                return []
-            
-            # 3. AI重新排序结果
-            reranked_results = self.rerank_results(query, results)
-            log_msg += f"重排序后结果数: {len(reranked_results)}\n"
-            
-            # 记录最终结果
-            for i, (content, metadata) in enumerate(reranked_results):
-                source = metadata.get('source', '未知来源')
-                log_msg += f"最终结果 {i+1} (来源: {source}): {content[:100]}...\n"
-            
-            # 写入日志文件
-            self._write_log(log_msg)
-            
-            return reranked_results
+        Returns:
+            AI生成的答案
+        """
+        # 构建系统提示
+        system_content = """你是一位专业的测试架构师和知识库分析师。请基于用户选定的知识库内容，回答问题并给出专业建议。
+
+    要求：
+    1. 基于用户选定的知识库内容回答问题（用户已经筛选过，所以这些内容都是相关的）
+    2. 直接引用选定的知识库内容，并注明来源
+    3. 给出具体的、可操作的建议
+    4. 使用清晰的结构化格式
+    5. 如果选定的知识库内容之间有矛盾或不一致，指出并给出你的专业判断
+
+    输出格式：
+    ## 问题分析
+    [分析用户问题的核心要点]
+
+    ## 基于选定参考的解决方案
+    [基于选定的知识库内容，给出具体的解决方案]
+
+    ## 实施步骤
+    1. [步骤1]
+    2. [步骤2]
+    3. [步骤3]
+
+    ## 注意事项
+    - [注意点1]
+    - [注意点2]
+
+    ## 后续建议
+    [针对该问题的后续工作建议]"""
         
-        except Exception as e:
-            error_msg = f"AI增强搜索失败: {str(e)}\n{traceback.format_exc()}"
-            self._write_log(error_msg)
-            print(error_msg)
-            return []
-    
-    def expand_short_query(self, query: str) -> str:
-        """扩展短查询"""
-        expansion_prompt = f"请扩展这个简短的搜索查询，使其更具体和详细：'{query}'"
+        # 构建上下文
+        if context_texts:
+            context_str = "\n\n".join([f"【选定参考内容 {i+1}】\n{text}" for i, text in enumerate(context_texts)])
+        else:
+            context_str = "用户没有选择任何参考内容。"
+        
+        # 构建消息
         messages = [
-            {"role": "system", "content": "你是一个搜索查询优化助手，请将简短的查询扩展为更具体、详细的搜索查询。"},
-            {"role": "user", "content": expansion_prompt}
-        ]
-        return self.generate_text(messages)
-    
-    def rerank_results(self, query: str, results: List[Tuple[str, Dict]]) -> List[Tuple[str, Dict]]:
-        """使用AI重新排序搜索结果"""
-        if not results:
-            return []
-        
-        # 构建重排序提示
-        results_text = ""
-        for i, (content, metadata) in enumerate(results):
-            source = metadata.get('source', '未知来源')
-            results_text += f"{i+1}. 来源: {source}\n内容: {content[:200]}...\n\n"
-        
-        rerank_prompt = f"""请根据查询内容重新排序以下搜索结果，只返回最相关的3个结果的编号（用逗号分隔）：
-        
-        查询：{query}
-        
-        搜索结果：
-        {results_text}
-        
-        请只返回最相关的3个结果的编号，例如：2,5,1"""
-        
-        messages = [
-            {"role": "system", "content": "你是一个搜索结果重排序助手，请根据查询相关性对结果进行排序。"},
-            {"role": "user", "content": rerank_prompt}
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": f"用户问题：{question}\n\n用户选定的知识库参考内容：\n{context_str}"}
         ]
         
-        response = self.generate_text(messages)
-        ranked_indices = self._parse_rerank_response(response, k=3, max_index=len(results))
-        
-        # 根据AI排序返回结果
-        reranked_results = []
-        for idx in ranked_indices:
-            if idx < len(results):
-                reranked_results.append(results[idx])
-        
-        # 如果AI排序失败，返回原始结果的前3个
-        if not reranked_results:
-            reranked_results = results[:3]
-        
-        return reranked_results
-    
-    def _parse_rerank_response(self, response: str, k: int, max_index: int) -> List[int]:
-        """解析AI的重新排序响应"""
-        import re
-        numbers = [int(num) for num in re.findall(r'\d+', response)]
-        
-        # 过滤有效索引
-        valid_indices = []
-        for num in numbers:
-            if 1 <= num <= max_index and num-1 not in valid_indices:
-                valid_indices.append(num-1)
-                if len(valid_indices) >= k:
-                    break
-                    
-        return valid_indices
+        # 生成答案
+        return self.generate_text(messages, temperature=0.3, max_tokens=2048)

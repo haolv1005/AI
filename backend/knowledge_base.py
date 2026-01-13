@@ -24,7 +24,8 @@ class KnowledgeBase:
         os.makedirs(self.index_path, exist_ok=True)
         
         self._embeddings = HuggingFaceEmbeddings(
-            model_name="shibing624/text2vec-base-chinese"
+            model_name="shibing624/text2vec-base-chinese",
+           
         )
         self._vectorstore = None
         self._init_vectorstore()
@@ -409,3 +410,110 @@ class KnowledgeBase:
                 print(f"删除物理文件失败: {str(e)}")
         
         return True
+    def search_with_score(self, query: str, k: int = 10) -> List[Tuple[str, Dict, float]]:
+        """搜索知识库并返回相似度分数（距离分数）"""
+        if not self._vectorstore:
+            return []
+        
+        try:
+            # 如果是初始化文档，返回空结果
+            if self._is_initialization_doc_only() and query.strip():
+                return []
+            
+            # 使用带分数的方法搜索
+            docs_with_scores = self._vectorstore.similarity_search_with_score(query, k=k)
+            
+            results = []
+            for doc, score in docs_with_scores:
+                # 过滤掉初始化文档
+                if doc.page_content == "系统初始化文档" and doc.metadata.get("source") == "system":
+                    continue
+                
+                content = doc.page_content
+                metadata = doc.metadata
+                
+                # 处理Excel数据
+                if metadata.get('type') == 'excel_data':
+                    test_case_patterns = [
+                        r'测试用例[名称|标题][:：]\s*(.+)',
+                        r'用例[名称|标题][:：]\s*(.+)',
+                        r'测试步骤[:：]\s*(.+)',
+                        r'预期结果[:：]\s*(.+)'
+                    ]
+                    
+                    extracted_info = {}
+                    for pattern in test_case_patterns:
+                        matches = re.findall(pattern, content)
+                        if matches:
+                            key = re.search(r'([^:：]+)[:：]', pattern).group(1)
+                            extracted_info[key] = matches[0]
+                    
+                    if extracted_info:
+                        content = f"提取的测试信息:\n" + "\n".join([f"{k}: {v}" for k, v in extracted_info.items()]) + f"\n\n原始内容:\n{content}"
+                
+                # 注意：FAISS的score是距离分数，越小越相似
+                # 对于余弦相似度，需要转换
+                results.append((content, metadata, float(score)))
+            
+            return results
+            
+        except Exception as e:
+            print(f"知识库搜索失败: {str(e)}")
+            traceback.print_exc()
+            return []
+
+    def get_similarity_percentage(self, distance: float) -> float:
+        """
+        将距离分数转换为相似度百分比
+        映射规则：
+        - 0-200分 → 100%-80%
+        - 201-400分 → 79%-60%
+        - 401-600分 → 59%-40%
+        - 601-800分 → 39%-20%
+        - 801分以上 → 19%-0%
+        
+        Args:
+            distance: 距离分数（越小表示越相似）
+            
+        Returns:
+            相似度百分比(0-100)
+        """
+        try:
+            # 分数越小越相似，所以需要反转映射
+            if distance <= 0:
+                return 100.0
+            elif distance <= 200:
+                # 0-200分映射到100%-80%
+                # 线性映射：distance从0到200，similarity从100到80
+                similarity = 100.0 - (distance / 200.0) * 20.0
+                return round(similarity, 2)
+            elif distance <= 400:
+                # 201-400分映射到79%-60%
+                # 线性映射：distance从201到400，similarity从79到60
+                similarity = 79.0 - ((distance - 201.0) / 199.0) * 19.0
+                return round(similarity, 2)
+            elif distance <= 600:
+                # 401-600分映射到59%-40%
+                # 线性映射：distance从401到600，similarity从59到40
+                similarity = 59.0 - ((distance - 401.0) / 199.0) * 19.0
+                return round(similarity, 2)
+            elif distance <= 800:
+                # 601-800分映射到39%-20%
+                # 线性映射：distance从601到800，similarity从39到20
+                similarity = 39.0 - ((distance - 601.0) / 199.0) * 19.0
+                return round(similarity, 2)
+            else:
+                # 801分以上映射到19%-0%
+                # 这里使用渐近方式，确保不会出现负数
+                if distance <= 1000:
+                    # 801-1000分映射到19%-0%
+                    similarity = 19.0 - ((distance - 801.0) / 199.0) * 19.0
+                    return max(0.0, round(similarity, 2))
+                else:
+                    # 超过1000分，使用指数衰减
+                    similarity = max(0.0, 100.0 / (1.0 + (distance - 800.0) / 200.0))
+                    return round(similarity, 2)
+        except Exception as e:
+            print(f"转换相似度失败: {str(e)}，距离: {distance}")
+            # 备用方案：简单的线性映射
+            return max(0.0, min(100.0, 100.0 - distance * 0.1))
