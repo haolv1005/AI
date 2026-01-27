@@ -410,7 +410,7 @@ class KnowledgeBase:
                 print(f"删除物理文件失败: {str(e)}")
         
         return True
-    def search_with_score(self, query: str, k: int = 10) -> List[Tuple[str, Dict, float]]:
+    def search_with_score(self, query: str, k: int = 20) -> List[Tuple[str, Dict, float]]:
         """搜索知识库并返回相似度分数（距离分数）"""
         if not self._vectorstore:
             return []
