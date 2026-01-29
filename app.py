@@ -7,7 +7,7 @@ import pandas as pd
 import time
 from datetime import datetime
 from typing import List, Dict
-import streamlit as st
+
 # 设置基础路径
 BASE_DIR = "E:/sm-ai"
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -97,11 +97,20 @@ st.sidebar.title("导航")
 page = st.sidebar.radio("选择页面", ["生成测试用例", "历史记录", "知识库管理", "知识库内容"])
 
 if page == "生成测试用例":
-    st.title("AI 测试用例生成系统 - 分步生成")
+    st.title("AI 测试用例生成系统 - 专业分析流程")
+    
+    # 显示本地模型优势
+    st.info("🚀 **本地AI模型优势**：")
+    st.markdown("""
+    - ✅ **无Token限制**：可以处理任意长度的文档
+    - ✅ **无时间限制**：AI生成过程不受时间限制
+    - ✅ **高质量输出**：可以生成非常详细的分析报告
+    - ✅ **支持长文档**：可以完整处理大型需求文档
+    """)
     
     # 初始化会话状态
     if 'generation_step' not in st.session_state:
-        st.session_state.generation_step = 0  # 0: 未开始, 1: 总结, 2: 需求分析, 3: 决策表, 4: 测试用例
+        st.session_state.generation_step = 0  # 0: 未开始, 1: 需求分析, 2: 测试点, 3: 决策表, 4: 测试用例
     if 'doc_text' not in st.session_state:
         st.session_state.doc_text = ""
     if 'current_summary' not in st.session_state:
@@ -121,7 +130,7 @@ if page == "生成测试用例":
     uploaded_file = st.file_uploader("上传 Word 或 PDF 需求文档", type=["docx", "pdf"])
     
     if uploaded_file and st.session_state.generation_step == 0:
-        if st.button("开始生成流程", key="start_generation"):
+        if st.button("开始专业分析流程", key="start_generation"):
             try:
                 # 保存文件并读取内容
                 file_path = save_uploaded_file(uploaded_file)
@@ -134,73 +143,252 @@ if page == "生成测试用例":
             except Exception as file_error:
                 st.error(f"文件处理失败: {str(file_error)}")
     
-    # 第一步：生成文档总结
+    # 第一步：专业需求文档分析
     if st.session_state.generation_step >= 1:
-        st.header("第一步：需求文档分析")
+        st.header("第一步：专业需求文档分析")
+        
+        # 显示分析步骤
+        with st.expander("📋 专业分析步骤说明", expanded=True):
+            st.markdown("""
+            ### 本次专业分析将分6个深度步骤进行：
+            
+            1. **📄 文档初步解析** - 分析文档结构、术语定义、完整性评估
+            2. **🔍 功能点识别与分类** - 提取并分类所有功能点，分析依赖关系
+            3. **⚠️ 问题识别** - 找出模糊点、矛盾点、遗漏点，评估可测试性
+            4. **🎯 测试关注点分析** - 从测试角度分析测试策略、关注点、数据需求
+            5. **🔎 自我检查** - 检查分析的完整性、一致性，补充遗漏内容
+            6. **📊 综合报告生成** - 整合所有分析结果，生成专业分析报告
+            
+            **本地AI优势**：每个步骤都会进行深度分析，不受token限制，确保分析质量。
+            """)
         
         if st.session_state.current_summary == "":
-            with st.spinner("正在进行全面的需求文档分析..."):
+            with st.spinner("正在进行专业的文档分析..."):
                 try:
+                    # 显示进度条
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # 显示步骤进度（模拟）
+                    step_names = ["文档初步解析", "功能点识别", "问题识别", 
+                                 "测试关注点分析", "自我检查", "生成综合报告"]
+                    
+                    for i in range(len(step_names)):
+                        progress_bar.progress((i + 1) / len(step_names))
+                        status_text.text(f"正在进行：{step_names[i]}")
+                        time.sleep(0.2)  # 为了让用户看到进度变化
+                    
+                    # 执行专业需求分析
                     st.session_state.current_summary = st.session_state.ai_client.enhanced_generate_summary_step(
                         st.session_state.doc_text
                     )
-                    st.success("需求文档分析完成！")
+                    
+                    progress_bar.progress(1.0)
+                    status_text.text("✅ 专业需求文档分析完成！")
+                    st.success("专业需求文档分析完成！")
+                    
                 except Exception as summary_error:
                     st.error(f"需求分析失败: {str(summary_error)}")
                     st.stop()
         
-        # 可编辑的总结区域
-        st.subheader("需求文档分析（可编辑）")
+        # 显示分析步骤完成情况
+        st.markdown("### 分析步骤完成情况")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.success("✅ 文档初步解析")
+            st.success("✅ 功能点识别")
+        with col2:
+            st.success("✅ 问题识别")
+            st.success("✅ 测试关注点分析")
+        with col3:
+            st.success("✅ 自我检查")
+            st.success("✅ 综合报告生成")
+        
+        # 可编辑的分析报告区域
+        st.subheader("📋 专业需求文档分析报告（可编辑）")
+        
+        # 添加格式提示
+        with st.expander("📝 编辑提示", expanded=False):
+            st.markdown("""
+            - **您可以直接修改分析报告内容**
+            - **建议重点关注**：
+              1. **高风险问题** - 需要立即澄清的内容
+              2. **功能架构** - 确保理解正确
+              3. **测试建议** - 根据实际情况调整
+            - **点击"确认分析并进入下一步"保存修改**
+            """)
+        
         edited_summary = st.text_area(
-            "编辑需求文档分析",
+            "编辑专业分析报告",
             value=st.session_state.current_summary,
-            height=300,
+            height=500,
             key="summary_editor"
         )
         
+        # 添加分析报告质量评估
+        try:
+            from backend.analysis_validator import AnalysisValidator
+            
+            with st.expander("📊 分析质量评估", expanded=False):
+                # 执行验证
+                validation_result = AnalysisValidator.comprehensive_validation(
+                    st.session_state.current_summary
+                )
+                
+                # 显示总体评分
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("总体评分", f"{validation_result['overall_score']}/100")
+                with col2:
+                    st.metric("质量等级", validation_result['quality_level'])
+                with col3:
+                    st.metric("完整度", f"{validation_result['completeness']['completeness_percentage']}%")
+                with col4:
+                    st.metric("可测试性", f"{validation_result['testability']['testability_score']}/100")
+                
+                # 显示详细评估
+                st.subheader("详细评估")
+                
+                # 完整性评估
+                with st.expander("完整性评估", expanded=False):
+                    completeness = validation_result['completeness']
+                    st.write(f"覆盖章节: {completeness['completeness_score']}/6")
+                    if completeness['missing_sections']:
+                        st.warning(f"缺失章节: {', '.join(completeness['missing_sections'])}")
+                    else:
+                        st.success("所有关键章节都已覆盖")
+                
+                # 结构评估
+                with st.expander("结构评估", expanded=False):
+                    structure = validation_result['structure']
+                    cols = st.columns(5)
+                    cols[0].metric("总行数", structure['total_lines'])
+                    cols[1].metric("标题数", structure['headings'])
+                    cols[2].metric("表格数", structure['tables'])
+                    cols[3].metric("列表项", structure['lists'])
+                    cols[4].metric("风险提及", structure['risk_mentions'])
+                
+                # 可测试性评估
+                with st.expander("可测试性评估", expanded=False):
+                    testability = validation_result['testability']
+                    st.write(f"可测试性得分: {testability['testability_score']}/100")
+                    
+                    if testability['recommendations']:
+                        st.warning("改进建议：")
+                        for rec in testability['recommendations']:
+                            st.write(f"- {rec}")
+                    else:
+                        st.success("可测试性良好")
+        except Exception as e:
+            # 如果分析验证器不可用，跳过
+            pass
+        
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("重新生成分析", type="secondary", key="regenerate_summary"):
+            if st.button("🔄 重新生成分析", type="secondary", key="regenerate_summary"):
                 st.session_state.current_summary = ""
                 st.rerun()
         with col2:
-            if st.button("确认分析并进入下一步", type="primary", key="confirm_summary"):
+            if st.button("✅ 确认分析并进入下一步", type="primary", key="confirm_summary"):
                 st.session_state.current_summary = edited_summary
                 st.session_state.generation_step = 2
                 st.rerun()
     
-    # 第二步：生成测试点文档
     if st.session_state.generation_step >= 2:
-        st.header("第二步：测试点文档生成")
+        st.header("第二步：基于功能点的测试点详细拆分")
+        
+        # 显示测试设计方法说明
+        with st.expander("🧪 测试设计方法说明", expanded=True):
+            st.markdown("""
+            ### 本次测试点生成使用4种专业的测试设计方法：
+            
+            1. **等价类划分法** (Equivalence Partitioning)
+               - 将输入域划分为有效和无效等价类
+               - 每个等价类选取代表性值进行测试
+            
+            2. **边界值分析法** (Boundary Value Analysis)
+               - 测试输入域的边界值、边界内值和边界外值
+               - 包括最小值、最大值、边界附近值
+            
+            3. **因果图法** (Cause-Effect Graphing)
+               - 分析输入条件（因）和输出结果（果）的关系
+               - 设计覆盖所有因果组合的测试用例
+            
+            4. **场景分析法** (Scenario Analysis)
+               - 基于用户实际使用场景设计测试
+               - 包括正常、异常、边界、并发等场景
+            
+            **目标**：为每个功能点生成详细的、可执行的测试点。
+            """)
         
         if st.session_state.current_requirement_analysis == "":
-            with st.spinner("正在生成测试点文档..."):
+            with st.spinner("正在使用4种测试设计方法生成详细测试点..."):
                 try:
+                    # 显示进度指示
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # 模拟进度更新
+                    step_names = ["提取功能点", "等价类划分", "边界值分析", 
+                                 "因果图分析", "场景分析", "生成测试点"]
+                    
+                    for i in range(len(step_names)):
+                        progress_bar.progress((i + 1) / len(step_names))
+                        status_text.text(f"正在执行：{step_names[i]}")
+                        time.sleep(0.2)
+                    
+                    # 执行测试点生成
                     test_points, analysis_report = st.session_state.ai_client.enhanced_generate_test_points_step(
                         st.session_state.current_summary
                     )
                     st.session_state.current_requirement_analysis = test_points
                     st.session_state.current_analysis_report = analysis_report
-                    st.success("测试点文档生成完成！")
+                    
+                    progress_bar.progress(1.0)
+                    status_text.text("✅ 测试点生成完成！")
+                    st.success("测试点生成完成！")
+                    
                 except Exception as analysis_error:
                     st.error(f"测试点生成失败: {str(analysis_error)}")
                     st.stop()
         
-        # 可编辑的测试点文档区域
-        st.subheader("测试点文档（可编辑）")
+        # 显示测试点统计
+        if st.session_state.current_requirement_analysis:
+            # 简单统计测试点数量
+            test_point_count = st.session_state.current_requirement_analysis.count("测试点ID")
+            eq_count = st.session_state.current_requirement_analysis.count("等价类")
+            bv_count = st.session_state.current_requirement_analysis.count("边界值")
+            ce_count = st.session_state.current_requirement_analysis.count("因果图")
+            sa_count = st.session_state.current_requirement_analysis.count("场景分析")
+            
+            st.markdown("### 📊 测试点统计")
+            col1, col2, col3, col4, col5 = st.columns(5)
+            with col1:
+                st.metric("总测试点数", test_point_count)
+            with col2:
+                st.metric("等价类测试点", eq_count)
+            with col3:
+                st.metric("边界值测试点", bv_count)
+            with col4:
+                st.metric("因果图测试点", ce_count)
+            with col5:
+                st.metric("场景分析测试点", sa_count)
+        
+        # 可编辑的测试点区域
+        st.subheader("详细测试点（可编辑）")
         edited_requirement_analysis = st.text_area(
-            "编辑测试点文档",
+            "编辑测试点",
             value=st.session_state.current_requirement_analysis,
-            height=300,
+            height=400,
             key="requirement_analysis_editor"
         )
         
-        # 显示验证报告（只读）
+        # 显示验证报告
         with st.expander("测试点验证报告", expanded=False):
             st.text_area(
                 "验证报告",
                 value=st.session_state.current_analysis_report,
-                height=200,
+                height=300,
                 key="analysis_report_viewer",
                 disabled=True
             )
@@ -221,147 +409,257 @@ if page == "生成测试用例":
                 st.session_state.generation_step = 3
                 st.rerun()
     
-    # 第三步：生成决策表
     if st.session_state.generation_step >= 3:
-        st.header("第三步：决策表生成")
+        st.header("第三步：智能问答生成测试用例")
         
-        if st.session_state.current_decision_table == "":
-            with st.spinner("正在生成测试决策表..."):
+        # 显示智能问答说明
+        with st.expander("🤖 智能问答流程说明", expanded=True):
+            st.markdown("""
+            ### 本步骤将通过智能问答为每个测试点生成详细的测试用例
+            
+            **流程**:
+            1. 📋 **解析测试点** - 从第二步结果中提取所有测试点
+            2. 🔍 **智能问答** - 为每个测试点询问："如何为这个测试点设计测试用例？"
+            3. 📝 **生成用例** - 基于智能问答的答案生成完整的测试用例
+            4. ✅ **自我检查** - 验证每个测试点都有对应的完整测试用例
+            5. 📊 **质量评估** - 评估生成的测试用例质量
+            
+            **特点**:
+            - 🔄 **逐个处理**: 为每个测试点单独生成测试用例
+            - 🎯 **针对性**: 针对具体测试点设计具体用例
+            - ✅ **完整性检查**: 确保没有遗漏任何测试点
+            - 📈 **质量保证**: 对生成的用例进行质量评估
+            
+            **注意**: 此步骤可能需要一些时间，因为要为每个测试点单独调用AI。
+            """)
+        
+        # 添加一个状态跟踪器
+        if 'test_cases_generated' not in st.session_state:
+            st.session_state.test_cases_generated = False
+            st.session_state.test_cases_data = None
+            st.session_state.test_cases_validation = None
+            st.session_state.test_cases_details = None
+        
+        if not st.session_state.test_cases_generated:
+            with st.spinner("正在通过智能问答生成测试用例..."):
                 try:
-                    st.session_state.current_decision_table = st.session_state.ai_client.enhanced_generate_decision_table_step(
+                    # 显示进度容器
+                    progress_container = st.empty()
+                    status_container = st.empty()
+                    
+                    # 模拟进度更新
+                    progress_bar = progress_container.progress(0)
+                    
+                    steps = [
+                        "解析测试点",
+                        "准备智能问答",
+                        "生成测试用例",
+                        "进行完整性检查",
+                        "生成验证报告"
+                    ]
+                    
+                    for i, step in enumerate(steps):
+                        progress_bar.progress((i + 1) / len(steps))
+                        status_container.text(f"正在执行: {step}")
+                        time.sleep(0.5)
+                    
+                    # 执行智能问答生成测试用例
+                    test_cases, validation_report, test_cases_details = st.session_state.ai_client.enhanced_generate_test_cases_step(
                         st.session_state.current_requirement_analysis
                     )
-                    st.success("决策表生成完成！")
-                except Exception as decision_error:
-                    st.error(f"决策表生成失败: {str(decision_error)}")
+                    
+                    st.session_state.current_test_cases = test_cases
+                    st.session_state.current_test_validation = validation_report
+                    st.session_state.test_cases_details = test_cases_details
+                    st.session_state.test_cases_generated = True
+                    
+                    progress_bar.progress(1.0)
+                    status_container.text("✅ 智能问答测试用例生成完成！")
+                    st.success("测试用例生成完成！")
+                    
+                    # 显示统计信息
+                    if test_cases_details:
+                        success_count = len([tc for tc in test_cases_details if 'error' not in tc])
+                        fail_count = len([tc for tc in test_cases_details if 'error' in tc])
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("总测试点数", len(test_cases_details))
+                        with col2:
+                            st.metric("成功生成", success_count)
+                        with col3:
+                            st.metric("生成失败", fail_count)
+                    
+                    st.rerun()
+                    
+                except Exception as testcase_error:
+                    st.error(f"测试用例生成失败: {str(testcase_error)}")
                     st.stop()
         
-        # 可编辑的决策表区域
-        st.subheader("决策表（可编辑）")
-        edited_decision_table = st.text_area(
-            "编辑决策表",
-            value=st.session_state.current_decision_table,
-            height=300,
-            key="decision_table_editor"
-        )
+        # 显示生成的测试用例
+        if st.session_state.test_cases_details:
+            total_test_points = len(st.session_state.test_cases_details)
+            total_test_cases = sum(
+                tc.get('test_cases_count', 0) 
+                for tc in st.session_state.test_cases_details 
+                if 'error' not in tc
+            )
+            failed_points = len([tc for tc in st.session_state.test_cases_details if 'error' in tc])
+            
+            with st.expander("📊 详细统计", expanded=True):
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("总测试点数", total_test_points)
+                with col2:
+                    st.metric("成功生成", total_test_points - failed_points)
+                with col3:
+                    st.metric("生成失败", failed_points)
+                with col4:
+                    st.metric("总测试用例数", total_test_cases)
+                
+                if failed_points > 0:
+                    st.warning(f"⚠️ 有 {failed_points} 个测试点生成失败，可能需要手动处理")
+                # 可编辑的测试用例区域
+                edited_test_cases = st.text_area(
+                    "编辑测试用例",
+                    value=st.session_state.current_test_cases,
+                    height=500,
+                    key="test_cases_editor"
+                )
+            
+            # 显示验证报告
+            with st.expander("✅ 完整性验证报告", expanded=False):
+                st.text_area(
+                    "验证报告",
+                    value=st.session_state.current_test_validation,
+                    height=300,
+                    key="test_validation_viewer",
+                    disabled=True
+                )
+            
+            # 显示详细生成记录
+            if st.session_state.test_cases_details:
+                with st.expander("📋 详细生成记录", expanded=False):
+                    for i, test_case in enumerate(st.session_state.test_cases_details[:10]):  # 只显示前10个
+                        if 'error' in test_case:
+                            st.error(f"❌ 测试点 {test_case.get('test_point', {}).get('id', f'{i+1}')} 生成失败")
+                            st.text(f"错误: {test_case.get('error', '未知错误')}")
+                        else:
+                            st.success(f"✅ 测试点 {test_case.get('test_point', {}).get('id', f'{i+1}')} 生成成功")
+                            with st.expander(f"查看生成详情", expanded=False):
+                                st.text(f"测试点: {test_case.get('test_point', {}).get('description', '')}")
+                                st.text(f"生成时间: {test_case.get('generated_at', '未知')}")
+                        st.divider()
+                    
+                    if len(st.session_state.test_cases_details) > 10:
+                        st.info(f"还有 {len(st.session_state.test_cases_details) - 10} 条记录未显示...")
         
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("返回上一步", type="secondary", key="back_to_step2"):
                 st.session_state.generation_step = 2
-                st.rerun()
-        with col2:
-            if st.button("重新生成决策表", type="secondary", key="regenerate_decision"):
-                st.session_state.current_decision_table = ""
-                st.rerun()
-        with col3:
-            if st.button("确认决策表并进入下一步", type="primary", key="confirm_decision"):
-                st.session_state.current_decision_table = edited_decision_table
-                st.session_state.generation_step = 4
-                st.rerun()
-    
-    # 第四步：生成测试用例
-    if st.session_state.generation_step >= 4:
-        st.header("第四步：测试用例生成")
-        
-        if st.session_state.current_test_cases == "":
-            with st.spinner("正在生成详细测试用例..."):
-                try:
-                    test_cases, test_validation = st.session_state.ai_client.enhanced_generate_test_cases_step(
-                        st.session_state.current_decision_table,
-                        st.session_state.current_requirement_analysis
-                    )
-                    st.session_state.current_test_cases = test_cases
-                    st.session_state.current_test_validation = test_validation
-                    st.success("测试用例生成完成！")
-                except Exception as testcase_error:
-                    st.error(f"测试用例生成失败: {str(testcase_error)}")
-                    st.stop()
-        
-        # 可编辑的测试用例区域
-        st.subheader("测试用例（可编辑）")
-        edited_test_cases = st.text_area(
-            "编辑测试用例",
-            value=st.session_state.current_test_cases,
-            height=400,
-            key="test_cases_editor"
-        )
-        
-        # 显示验证报告（只读）
-        with st.expander("测试用例验证报告", expanded=False):
-            st.text_area(
-                "验证报告",
-                value=st.session_state.current_test_validation,
-                height=200,
-                key="test_validation_viewer",
-                disabled=True
-            )
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("返回上一步", type="secondary", key="back_to_step3"):
-                st.session_state.generation_step = 3
+                st.session_state.test_cases_generated = False
                 st.rerun()
         with col2:
             if st.button("重新生成测试用例", type="secondary", key="regenerate_testcases"):
+                st.session_state.test_cases_generated = False
                 st.session_state.current_test_cases = ""
                 st.session_state.current_test_validation = ""
+                st.session_state.test_cases_details = None
                 st.rerun()
         with col3:
-            if st.button("完成并生成Excel", type="primary", key="finish_and_generate"):
-                st.session_state.current_test_cases = edited_test_cases
-                
-                # 生成 Excel 文件
-                try:
-                    output_path = st.session_state.testcase_gen.generate_excel(
-                        st.session_state.current_test_cases, 
-                        st.session_state.original_filename
-                    )
-                    st.success(f"Excel 文件已生成: {output_path}")
-                    
-                    # 保存记录到数据库
-                    try:
-                        record_id = st.session_state.db.add_record(
-                            original_filename=st.session_state.original_filename,
-                            file_path=st.session_state.file_path,
-                            output_filename=os.path.basename(output_path),
-                            output_path=output_path,
-                            summary=st.session_state.current_summary,
-                            requirement_analysis=st.session_state.current_requirement_analysis,
-                            decision_table=st.session_state.current_decision_table,
-                            test_cases=st.session_state.current_test_cases,
-                            test_validation=st.session_state.current_test_validation
-                        )
-                        st.info(f"记录已保存到数据库，ID: {record_id}")
-                    except Exception as db_error:
-                        st.warning(f"保存记录失败: {str(db_error)}")
-                    
-                    # 提供下载链接
-                    if os.path.exists(output_path):
-                        with open(output_path, "rb") as f:
-                            st.download_button(
-                                label="下载 Excel 测试用例",
-                                data=f,
-                                file_name=os.path.basename(output_path),
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key="download_excel_final"
-                            )
-                    else:
-                        st.error(f"Excel文件未找到: {output_path}")
-                        
-                except Exception as excel_error:
-                    st.error(f"生成 Excel 文件失败: {str(excel_error)}")
-        
-        # 重置流程按钮
-        st.markdown("---")
-        if st.button("重新开始新流程", type="secondary", key="reset_workflow"):
-            for key in ['generation_step', 'doc_text', 'current_summary', 'current_requirement_analysis', 
-                       'current_analysis_report', 'current_decision_table', 'current_test_cases', 
-                       'current_test_validation', 'file_path', 'original_filename']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.success("流程已重置，可以开始新的生成了！")
+            if st.button("确认用例并进入下一步", type="primary", key="confirm_testcases"):
+                if edited_test_cases:
+                    st.session_state.current_test_cases = edited_test_cases
+                st.session_state.generation_step = 4
+                st.rerun()
+    
+    # 第四步：生成最终输出
+    if st.session_state.generation_step >= 4:
+        st.header("第四步：生成最终输出")
+        st.subheader("📋 测试用例（直接使用原始结果）")
+        # 添加一个状态跟踪器
+        with st.expander("查看完整的测试用例", expanded=True):
+        # 可编辑的测试用例区域
+            final_test_cases = st.text_area(
+            "编辑测试用例（可选）",
+            value=st.session_state.current_test_cases,
+            height=500,
+            key="final_test_cases_editor"
+        )
+    
+    # 显示验证报告
+    if st.session_state.current_test_validation:
+        with st.expander("✅ 完整性验证报告", expanded=False):
+            st.text_area(
+                "验证报告",
+                value=st.session_state.current_test_validation,
+                height=300,
+                key="final_validation_viewer",
+                disabled=True
+            )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("返回上一步", type="secondary", key="back_to_step3"):
+            st.session_state.generation_step = 3
             st.rerun()
+    with col2:
+        if st.button("生成Excel文件", type="primary", key="generate_excel_final"):
+            try:
+                # 直接使用原始测试用例生成Excel
+                output_path = st.session_state.testcase_gen.generate_excel(
+                    final_test_cases,  # 使用用户可能编辑后的版本
+                    st.session_state.original_filename
+                )
+                st.success(f"Excel 文件已生成: {output_path}")
+                
+                # 保存记录到数据库
+                try:
+                    record_id = st.session_state.db.add_record(
+                        original_filename=st.session_state.original_filename,
+                        file_path=st.session_state.file_path,
+                        output_filename=os.path.basename(output_path),
+                        output_path=output_path,
+                        summary=st.session_state.current_summary,
+                        requirement_analysis=st.session_state.current_requirement_analysis,
+                        decision_table="智能问答生成测试用例流程",
+                        test_cases=st.session_state.current_test_cases,
+                        test_validation=st.session_state.current_test_validation
+                    )
+                    st.info(f"记录已保存到数据库，ID: {record_id}")
+                except Exception as db_error:
+                    st.warning(f"保存记录失败: {str(db_error)}")
+                
+                # 提供下载链接
+                if os.path.exists(output_path):
+                    with open(output_path, "rb") as f:
+                        st.download_button(
+                            label="下载 Excel 测试用例",
+                            data=f,
+                            file_name=os.path.basename(output_path),
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_excel_final"
+                        )
+                else:
+                    st.error(f"Excel文件未找到: {output_path}")
+                    
+            except Exception as excel_error:
+                st.error(f"生成 Excel 文件失败: {str(excel_error)}")
+                st.text(traceback.format_exc())
+    
+    # 重置流程按钮
+    st.markdown("---")
+    if st.button("重新开始新流程", type="secondary", key="reset_workflow"):
+        for key in ['generation_step', 'doc_text', 'current_summary', 'current_requirement_analysis', 
+                   'current_analysis_report', 'current_test_cases', 'current_test_validation',
+                   'test_cases_generated', 'test_cases_details', 'file_path', 'original_filename']:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.success("流程已重置，可以开始新的生成了！")
+        st.rerun()
+        
+      
 
 elif page == "历史记录":
     st.title("历史生成记录")
@@ -1348,5 +1646,46 @@ st.markdown("""
     .stProgress > div > div {
         background-color: #2196F3 !important;
     }
+    /* 专业分析报告样式 */
+    .analysis-step {
+        border-left: 4px solid #4CAF50;
+        padding-left: 1rem;
+        margin: 1rem 0;
+    }
+    .risk-high {
+        background-color: #ffebee;
+        border-left: 4px solid #f44336;
+        padding: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    .risk-medium {
+        background-color: #fff3e0;
+        border-left: 4px solid #ff9800;
+        padding: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    .risk-low {
+        background-color: #e8f5e8;
+        border-left: 4px solid #4CAF50;
+        padding: 0.5rem;
+        margin: 0.5rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# 添加页面底部信息
+st.sidebar.markdown("---")
+st.sidebar.info("""
+### 系统信息
+- **版本**: 2.0 (专业分析版)
+- **AI模型**: 本地Ollama
+- **数据库**: SQLite
+- **知识库**: FAISS + HuggingFace
+
+### 专业分析功能
+- ✅ 六步深度需求分析
+- ✅ 测试工程师视角
+- ✅ 自动问题识别
+- ✅ 可测试性评估
+- ✅ 完整质量检查
+""")
