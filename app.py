@@ -575,6 +575,10 @@ if page == "生成测试用例":
                 st.rerun()
     
     # 第四步：生成最终输出
+    if 'current_test_cases' not in st.session_state:
+        st.session_state.current_test_cases = ""
+    if 'current_test_validation' not in st.session_state:
+        st.session_state.current_test_validation = ""
     if st.session_state.generation_step >= 4:
         st.header("第四步：生成最终输出")
         st.subheader("📋 测试用例（直接使用原始结果）")
@@ -589,75 +593,75 @@ if page == "生成测试用例":
         )
     
     # 显示验证报告
-    if st.session_state.current_test_validation:
-        with st.expander("✅ 完整性验证报告", expanded=False):
-            st.text_area(
-                "验证报告",
-                value=st.session_state.current_test_validation,
-                height=300,
-                key="final_validation_viewer",
-                disabled=True
-            )
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("返回上一步", type="secondary", key="back_to_step3"):
-            st.session_state.generation_step = 3
-            st.rerun()
-    with col2:
-        if st.button("生成Excel文件", type="primary", key="generate_excel_final"):
-            try:
-                # 直接使用原始测试用例生成Excel
-                output_path = st.session_state.testcase_gen.generate_excel(
-                    final_test_cases,  # 使用用户可能编辑后的版本
-                    st.session_state.original_filename
+        if st.session_state.current_test_validation:
+            with st.expander("✅ 完整性验证报告", expanded=False):
+                st.text_area(
+                    "验证报告",
+                    value=st.session_state.current_test_validation,
+                    height=300,
+                    key="final_validation_viewer",
+                    disabled=True
                 )
-                st.success(f"Excel 文件已生成: {output_path}")
-                
-                # 保存记录到数据库
-                try:
-                    record_id = st.session_state.db.add_record(
-                        original_filename=st.session_state.original_filename,
-                        file_path=st.session_state.file_path,
-                        output_filename=os.path.basename(output_path),
-                        output_path=output_path,
-                        summary=st.session_state.current_summary,
-                        requirement_analysis=st.session_state.current_requirement_analysis,
-                        decision_table="智能问答生成测试用例流程",
-                        test_cases=st.session_state.current_test_cases,
-                        test_validation=st.session_state.current_test_validation
-                    )
-                    st.info(f"记录已保存到数据库，ID: {record_id}")
-                except Exception as db_error:
-                    st.warning(f"保存记录失败: {str(db_error)}")
-                
-                # 提供下载链接
-                if os.path.exists(output_path):
-                    with open(output_path, "rb") as f:
-                        st.download_button(
-                            label="下载 Excel 测试用例",
-                            data=f,
-                            file_name=os.path.basename(output_path),
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="download_excel_final"
-                        )
-                else:
-                    st.error(f"Excel文件未找到: {output_path}")
-                    
-            except Exception as excel_error:
-                st.error(f"生成 Excel 文件失败: {str(excel_error)}")
-                st.text(traceback.format_exc())
     
-    # 重置流程按钮
-    st.markdown("---")
-    if st.button("重新开始新流程", type="secondary", key="reset_workflow"):
-        for key in ['generation_step', 'doc_text', 'current_summary', 'current_requirement_analysis', 
-                   'current_analysis_report', 'current_test_cases', 'current_test_validation',
-                   'test_cases_generated', 'test_cases_details', 'file_path', 'original_filename']:
-            if key in st.session_state:
-                del st.session_state[key]
-        st.success("流程已重置，可以开始新的生成了！")
-        st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("返回上一步", type="secondary", key="back_to_step3"):
+                st.session_state.generation_step = 3
+                st.rerun()
+        with col2:
+            if st.button("生成Excel文件", type="primary", key="generate_excel_final"):
+                try:
+                    # 直接使用原始测试用例生成Excel
+                    output_path = st.session_state.testcase_gen.generate_excel(
+                        final_test_cases,  # 使用用户可能编辑后的版本
+                        st.session_state.original_filename
+                    )
+                    st.success(f"Excel 文件已生成: {output_path}")
+                    
+                    # 保存记录到数据库
+                    try:
+                        record_id = st.session_state.db.add_record(
+                            original_filename=st.session_state.original_filename,
+                            file_path=st.session_state.file_path,
+                            output_filename=os.path.basename(output_path),
+                            output_path=output_path,
+                            summary=st.session_state.current_summary,
+                            requirement_analysis=st.session_state.current_requirement_analysis,
+                            decision_table="智能问答生成测试用例流程",
+                            test_cases=st.session_state.current_test_cases,
+                            test_validation=st.session_state.current_test_validation
+                        )
+                        st.info(f"记录已保存到数据库，ID: {record_id}")
+                    except Exception as db_error:
+                        st.warning(f"保存记录失败: {str(db_error)}")
+                    
+                    # 提供下载链接
+                    if os.path.exists(output_path):
+                        with open(output_path, "rb") as f:
+                            st.download_button(
+                                label="下载 Excel 测试用例",
+                                data=f,
+                                file_name=os.path.basename(output_path),
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="download_excel_final"
+                            )
+                    else:
+                        st.error(f"Excel文件未找到: {output_path}")
+                        
+                except Exception as excel_error:
+                    st.error(f"生成 Excel 文件失败: {str(excel_error)}")
+                    st.text(traceback.format_exc())
+    
+        # 重置流程按钮
+        st.markdown("---")
+        if st.button("重新开始新流程", type="secondary", key="reset_workflow"):
+            for key in ['generation_step', 'doc_text', 'current_summary', 'current_requirement_analysis', 
+                    'current_analysis_report', 'current_test_cases', 'current_test_validation',
+                    'test_cases_generated', 'test_cases_details', 'file_path', 'original_filename']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.success("流程已重置，可以开始新的生成了！")
+            st.rerun()
         
       
 
