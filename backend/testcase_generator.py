@@ -393,6 +393,3 @@ class TestCaseGenerator:
         return pd.DataFrame(stats_data)
     
     # 为了向后兼容，添加旧的解析方法
-    def _parse_smart_qa_test_cases(self, test_cases: str) -> List[Dict]:
-        """旧的解析方法（向后兼容）"""
-        return self._parse_enhanced_test_cases(test_cases)

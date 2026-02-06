@@ -199,57 +199,7 @@ class KnowledgeBase:
         except:
             return False
 
-    def search(self, query: str, k: int = 5) -> List[Tuple[str, Dict]]:
-        """搜索知识库"""
-        if not self._vectorstore:
-            return []
-        
-        try:
-            # 如果是初始化文档，返回空结果
-            if self._is_initialization_doc_only() and query.strip():
-                return []
-            
-            # 执行相似度搜索
-            docs = self._vectorstore.similarity_search(query, k=k)
-            
-            # 过滤掉初始化文档
-            filtered_docs = []
-            for doc in docs:
-                if not (doc.page_content == "系统初始化文档" and doc.metadata.get("source") == "system"):
-                    filtered_docs.append(doc)
-            
-            # 格式化结果
-            results = []
-            for doc in filtered_docs:
-                content = doc.page_content
-                metadata = doc.metadata
-                
-                # 如果是Excel数据，尝试提取更结构化的信息
-                if metadata.get('type') == 'excel_data':
-                    test_case_patterns = [
-                        r'测试用例[名称|标题][:：]\s*(.+)',
-                        r'用例[名称|标题][:：]\s*(.+)',
-                        r'测试步骤[:：]\s*(.+)',
-                        r'预期结果[:：]\s*(.+)'
-                    ]
-                    
-                    extracted_info = {}
-                    for pattern in test_case_patterns:
-                        matches = re.findall(pattern, content)
-                        if matches:
-                            key = re.search(r'([^:：]+)[:：]', pattern).group(1)
-                            extracted_info[key] = matches[0]
-                    
-                    if extracted_info:
-                        content = f"提取的测试信息:\n" + "\n".join([f"{k}: {v}" for k, v in extracted_info.items()]) + f"\n\n原始内容:\n{content}"
-                
-                results.append((content, metadata))
-            
-            return results
-            
-        except Exception as e:
-            print(f"知识库搜索失败: {str(e)}")
-            return []
+    #删除代码search函数
 
     def rebuild_index(self):
         """完全重建知识库索引 - 修复版本"""
@@ -384,32 +334,7 @@ class KnowledgeBase:
         
         return status
         
-        return status
-    def delete_knowledge_file(self, file_id: int):
-        """删除知识库文件记录"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 先获取文件路径
-        cursor.execute("SELECT file_path FROM knowledge_files WHERE id = ?", (file_id,))
-        result = cursor.fetchone()
-        if not result:
-            return False
-        file_path = result[0]
-        
-        # 删除记录
-        cursor.execute("DELETE FROM knowledge_files WHERE id = ?", (file_id,))
-        
-        conn.commit()
-        
-        # 尝试删除物理文件
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception as e:
-                print(f"删除物理文件失败: {str(e)}")
-        
-        return True
+    
     def search_with_score(self, query: str, k: int = 20) -> List[Tuple[str, Dict, float]]:
         """搜索知识库并返回相似度分数（距离分数）"""
         if not self._vectorstore:

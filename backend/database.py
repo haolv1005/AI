@@ -1,11 +1,12 @@
-# backend/database.py
+# backend/database.py - 修复版本
 import sqlite3
 import os
 import threading
 import traceback
 from pathlib import Path
-from typing import List
-from typing import List, Tuple, Dict, Union
+from typing import List, Dict
+import time
+
 thread_local = threading.local()
 
 class Database:
@@ -15,8 +16,9 @@ class Database:
         self._create_tables()
     
     def _get_connection(self):
+        """获取数据库连接（线程安全）"""
         if not hasattr(thread_local, "connection"):
-            thread_local.connection = sqlite3.connect(self.db_path)
+            thread_local.connection = sqlite3.connect(str(self.db_path), check_same_thread=False)
             thread_local.connection.row_factory = sqlite3.Row
         return thread_local.connection
     
@@ -27,6 +29,23 @@ class Database:
         
         # 创建记录表（如果不存在）
         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_filename TEXT,
+                file_path TEXT,
+                output_filename TEXT,
+                output_path TEXT,
+                summary TEXT,
+                requirement_analysis TEXT,
+                decision_table TEXT,
+                test_cases TEXT,
+                test_validation TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # 创建知识文件表（如果不存在）
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS knowledge_files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT NOT NULL,
@@ -34,16 +53,156 @@ class Database:
                 uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # 创建智能问答记录表（新增）
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS qa_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                reference_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         conn.commit()
-        
-        
-        # 定义要添加的列
-        
+        print(f"数据库表已创建/检查完成，路径: {self.db_path}")
     
+    def add_qa_record(self, question: str, answer: str, reference_count: int = 0) -> int:
+        """添加智能问答记录"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO qa_history (question, answer, reference_count)
+                VALUES (?, ?, ?)
+            ''', (question, answer, reference_count))
+            conn.commit()
+            record_id = cursor.lastrowid
+            print(f"成功添加问答记录，ID: {record_id}")
+            return record_id
+        except Exception as e:
+            print(f"添加问答记录失败: {str(e)}")
+            print(traceback.format_exc())
+            conn.rollback()
+            return -1
+    
+    def get_qa_records(self, limit: int = 100) -> List[Dict]:
+        """获取智能问答记录"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT * FROM qa_history 
+                ORDER BY created_at DESC 
+                LIMIT ?
+            ''', (limit,))
+            rows = cursor.fetchall()
+            
+            return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"获取问答记录失败: {str(e)}")
+            print(traceback.format_exc())
+            return []
+    
+    def delete_qa_record(self, record_id: int) -> bool:
+        """删除智能问答记录"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("DELETE FROM qa_history WHERE id = ?", (record_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"删除问答记录失败: {str(e)}")
+            print(traceback.format_exc())
+            conn.rollback()
+            return False
+    
+    def add_knowledge_file(self, filename, file_path):
+        """添加知识文件记录"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            print(f"尝试添加知识文件: {filename} -> {file_path}")
+            
+            # 检查文件是否已存在
+            cursor.execute("SELECT id FROM knowledge_files WHERE file_path = ?", (file_path,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                print(f"文件已存在，ID: {existing['id']}")
+                return True
+            
+            # 添加新记录
+            cursor.execute('''
+                INSERT INTO knowledge_files (filename, file_path)
+                VALUES (?, ?)
+            ''', (filename, file_path))
+            conn.commit()
+            
+            file_id = cursor.lastrowid
+            print(f"成功添加知识文件记录，ID: {file_id}, 文件名: {filename}")
+            return True
+        except Exception as e:
+            print(f"添加知识文件记录失败: {str(e)}")
+            print(traceback.format_exc())
+            conn.rollback()
+            return False
+    
+    def get_knowledge_documents(self) -> List[Dict]:
+        """获取知识库文档列表"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT * FROM knowledge_files ORDER BY uploaded_at DESC')
+            rows = cursor.fetchall()
+            
+            records = []
+            for row in rows:
+                record = dict(row)
+                # 检查文件是否存在
+                file_path = record.get('file_path', '')
+                if file_path:
+                    record['exists'] = os.path.exists(file_path)
+                else:
+                    record['exists'] = False
+                
+                # 获取文件大小
+                if record['exists']:
+                    try:
+                        size = os.path.getsize(file_path)
+                        # 格式化文件大小
+                        if size < 1024:
+                            record['size_str'] = f"{size} B"
+                        elif size < 1024 * 1024:
+                            record['size_str'] = f"{size/1024:.2f} KB"
+                        else:
+                            record['size_str'] = f"{size/(1024*1024):.2f} MB"
+                    except:
+                        record['size_str'] = "未知大小"
+                else:
+                    record['size_str'] = "文件不存在"
+                
+                records.append(record)
+            
+            print(f"从数据库获取到 {len(records)} 条知识文件记录")
+            return records
+        except Exception as e:
+            print(f"获取知识库文档失败: {str(e)}")
+            print(traceback.format_exc())
+            return []
+    
+    # 其他方法保持不变...
     def add_record(self, original_filename, file_path, output_filename, output_path, 
                    summary=None, requirement_analysis=None, decision_table=None, 
                    test_cases=None, test_validation=None):
-        """添加记录到数据库（新流程所需字段）"""
+        """添加记录到数据库"""
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute('''
@@ -63,143 +222,12 @@ class Database:
         return cursor.lastrowid
     
     def get_records(self):
-        """获取所有记录（包括新流程的所有字段）"""
+        """获取所有记录"""
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM records ORDER BY created_at DESC')
         return [dict(row) for row in cursor.fetchall()]
     
-    def add_knowledge_file(self, filename, file_path):
-        """添加知识文件记录"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # 检查文件是否已存在
-            cursor.execute("SELECT id FROM knowledge_files WHERE file_path = ?", (file_path,))
-            existing = cursor.fetchone()
-            
-            if existing:
-                print(f"文件已存在，跳过添加: {file_path}")
-                return True
-            
-            # 添加新记录
-            cursor.execute('''
-                INSERT INTO knowledge_files (filename, file_path)
-                VALUES (?, ?)
-            ''', (filename, file_path))
-            conn.commit()
-            print(f"成功添加知识文件记录: {filename} -> {file_path}")
-            return True
-        except Exception as e:
-            print(f"添加知识文件记录失败: {str(e)}")
-            print(traceback.format_exc())
-            return False
-    
-    def get_knowledge_documents(self) -> List[Dict]:
-        """获取知识库文档列表，添加详细日志"""
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT * FROM knowledge_files ORDER BY uploaded_at DESC')
-            records = []
-            
-            for row in cursor.fetchall():
-                record = dict(row)
-                record['exists'] = os.path.exists(record['file_path'])
-                if record['exists']:
-                    try:
-                        record['size'] = os.path.getsize(record['file_path'])
-                        # 转换为更友好的格式
-                        record['size_str'] = self._format_file_size(record['size'])
-                    except Exception as e:
-                        record['size'] = 0
-                        record['size_str'] = "未知大小"
-                else:
-                    record['size'] = 0
-                    record['size_str'] = "文件不存在"
-                    records.append(record)
-            
-            print(f"从数据库获取到 {len(records)} 条知识文件记录")
-            return records
-        except Exception as e:
-            print(f"获取知识库文档失败: {str(e)}")
-            print(traceback.format_exc())
-            return []
-    def _format_file_size(self, size_bytes: int) -> str:
-        """格式化文件大小为可读字符串"""
-        if size_bytes == 0:
-            return "0 B"
-        
-        size_names = ["B", "KB", "MB", "GB"]
-        i = 0
-        while size_bytes >= 1024 and i < len(size_names) - 1:
-            size_bytes /= 1024.0
-            i += 1
-        
-        return f"{size_bytes:.2f} {size_names[i]}"
-    def get_knowledge_documents(self) -> List[Dict]:
-        """获取知识库文档列表，添加详细日志"""
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT * FROM knowledge_files ORDER BY uploaded_at DESC')
-            records = []
-            
-            for row in cursor.fetchall():
-                record = dict(row)
-                record['exists'] = os.path.exists(record['file_path'])
-                records.append(record)
-            
-            print(f"从数据库获取到 {len(records)} 条知识文件记录")
-            return records
-        except Exception as e:
-            print(f"获取知识库文档失败: {str(e)}")
-            print(traceback.format_exc())
-            return []
-    
-
-        """获取所有知识文件记录"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM knowledge_files ORDER BY uploaded_at DESC')
-        return [dict(row) for row in cursor.fetchall()]
-    # 在Database类中添加新方法
-    # 在Database类中添加新方法
-    def get_knowledge_documents(self) -> List[Dict]:
-        """获取知识库文档列表"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 获取所有知识文件
-        cursor.execute('SELECT * FROM knowledge_files ORDER BY uploaded_at DESC')
-        records = []
-        
-        # 为每个文件添加文档计数
-        for row in cursor.fetchall():
-            record = dict(row)
-            record['exists'] = os.path.exists(record['file_path'])
-            records.append(record)
-    
-        return records
-        
-        
-
-    def get_vector_documents(self) -> List[Dict]:
-        """获取所有向量文档及关联文件信息"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT vd.id, vd.content, vd.metadata, 
-                kf.filename, kf.file_path, kf.uploaded_at
-            FROM vector_documents vd
-            JOIN knowledge_files kf ON vd.file_id = kf.id
-            ORDER BY kf.uploaded_at DESC
-        ''')
-        return [dict(row) for row in cursor.fetchall()]
-    # 在Database类中添加删除方法
     def delete_knowledge_file(self, file_id: int):
         """删除知识库文件记录"""
         conn = self._get_connection()
@@ -214,17 +242,18 @@ class Database:
         
         # 删除记录
         cursor.execute("DELETE FROM knowledge_files WHERE id = ?", (file_id,))
-        
         conn.commit()
         
         # 尝试删除物理文件
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
+                print(f"已删除物理文件: {file_path}")
             except Exception as e:
                 print(f"删除物理文件失败: {str(e)}")
         
         return True
+    
     def delete_record(self, record_id: int):
         """删除记录及其相关文件"""
         conn = self._get_connection()
@@ -241,7 +270,6 @@ class Database:
             
             # 删除记录
             cursor.execute("DELETE FROM records WHERE id = ?", (record_id,))
-            
             conn.commit()
             
             # 尝试删除输出文件
