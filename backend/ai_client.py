@@ -1190,7 +1190,6 @@ class AIClient:
     def answer_with_knowledge(self, question: str, context_texts: List[str]) -> str:
         """
         基于选定的知识库内容回答问题
-        这是一个简化的版本，实际使用时可能需要更复杂的处理
         """
         # 构建消息
         if context_texts:

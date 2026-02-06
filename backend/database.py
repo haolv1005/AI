@@ -1,4 +1,4 @@
-# backend/database.py - 修复版本
+# backend/database.py - 恢复QA记录功能
 import sqlite3
 import os
 import threading
@@ -54,7 +54,7 @@ class Database:
             )
         ''')
         
-        # 创建智能问答记录表（新增）
+        # 创建智能问答记录表（简化版）
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS qa_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,7 +69,7 @@ class Database:
         print(f"数据库表已创建/检查完成，路径: {self.db_path}")
     
     def add_qa_record(self, question: str, answer: str, reference_count: int = 0) -> int:
-        """添加智能问答记录"""
+        """添加智能问答记录（简化版）"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
@@ -198,7 +198,6 @@ class Database:
             print(traceback.format_exc())
             return []
     
-    # 其他方法保持不变...
     def add_record(self, original_filename, file_path, output_filename, output_path, 
                    summary=None, requirement_analysis=None, decision_table=None, 
                    test_cases=None, test_validation=None):

@@ -1,3 +1,4 @@
+# app.py - 保留QA记录功能，但不包括点赞/踩和日报月报
 # 禁用文件监视器避免错误
 import os
 import sys
@@ -40,7 +41,7 @@ from backend.knowledge_base import KnowledgeBase
 from backend.testcase_generator import TestCaseGenerator
 from backend.document_processor import DocumentProcessor
 from backend.ai_client import AIClient
-from backend.qa_logger import QALogger
+from backend.qa_logger import QALogger  # 保留日志，但简化了功能
 
 # 工具函数
 def save_uploaded_file(uploaded_file, upload_dir=os.path.join(DATA_DIR, "uploads")):
@@ -67,9 +68,7 @@ if 'initialized' not in st.session_state:
         st.session_state.ai_client = AIClient(knowledge_base=st.session_state.kb)
         
         log_dir = os.path.join(BASE_DIR, "log")
-        st.session_state.qa_logger = QALogger(log_dir=log_dir)
-        
-
+        st.session_state.qa_logger = QALogger(log_dir=log_dir)  # 初始化日志
         
         st.session_state.session_id = f"{int(time.time())}_{hash(str(time.time()))}"
         
@@ -84,6 +83,7 @@ st.sidebar.title("导航")
 page = st.sidebar.radio("选择页面", ["生成测试用例", "历史记录", "知识库管理"])
 
 if page == "生成测试用例":
+    # ... (这部分代码保持不变) ...
     st.title("AI 测试用例生成系统")
     
     # 初始化会话状态
@@ -546,6 +546,7 @@ elif page == "历史记录":
                                 st.error("删除失败")
                     
                     st.divider()
+
 elif page == "知识库管理":
     st.title("知识库管理")
     
@@ -565,7 +566,7 @@ elif page == "知识库管理":
             "结果数量",
             min_value=1,
             max_value=50,
-            value=10,  # 默认值改为10
+            value=10,
             step=1,
             key="result_count_input"
         )
@@ -574,7 +575,7 @@ elif page == "知识库管理":
             "相似度阈值(%)",
             min_value=0,
             max_value=100,
-            value=65,  # 默认值改为65
+            value=65,
             step=5,
             key="similarity_threshold"
         )
@@ -586,11 +587,11 @@ elif page == "知识库管理":
                 st.warning("请输入查询内容")
             else:
                 with st.spinner("正在搜索知识库..."):
-                    # 执行搜索，使用用户设置的result_count，乘以2确保有足够的结果进行过滤
-                    search_k = min(50, result_count * 2)  # 最多搜索50个，但至少是结果数的2倍
+                    # 执行搜索
+                    search_k = min(50, result_count * 2)
                     knowledge_results = st.session_state.kb.search_with_score(
                         search_query.strip(), 
-                        k=search_k  # 修复：使用动态计算的k值
+                        k=search_k
                     )
                     
                     # 过滤结果：按相似度阈值过滤，并按相似度排序
@@ -617,7 +618,7 @@ elif page == "知识库管理":
                     # 按相似度排序（从高到低）
                     relevant_results.sort(key=lambda x: x["similarity"], reverse=True)
                     
-                    # 限制显示数量为用户设置的result_count
+                    # 限制显示数量
                     if len(relevant_results) > result_count:
                         relevant_results = relevant_results[:result_count]
                     
@@ -680,13 +681,13 @@ elif page == "知识库管理":
                 "工作表": metadata.get('sheet', 'N/A'),
                 "行号": str(metadata.get('row', 'N/A')),
                 "内容摘要": (content[:80] + "...") if len(content) > 80 else content,
-                "ID": result["id"]  # 隐藏ID，用于选择
+                "ID": result["id"]
             })
         
         # 创建可编辑的DataFrame用于选择
         df_results = pd.DataFrame(table_data)
         
-        # 使用st.data_editor，但需要处理选择状态的变化
+        # 使用st.data_editor显示表格
         edited_df = st.data_editor(
             df_results[["选择", "排名", "相似度", "文件名", "类型", "工作表", "行号", "内容摘要"]],
             use_container_width=True,
@@ -706,17 +707,16 @@ elif page == "知识库管理":
                 ),
                 "内容摘要": st.column_config.TextColumn(width="large"),
             },
-            key="search_results_table"  # 添加key以便追踪状态
+            key="search_results_table"
         )
         
-        # 更新选择状态 - 检查是否有变化
+        # 更新选择状态
         if not edited_df.empty and '选择' in edited_df.columns:
             selected_ids = []
             for idx, row in edited_df.iterrows():
                 if row['选择'] and idx < len(st.session_state.kb_search_results):
                     selected_ids.append(st.session_state.kb_search_results[idx]["id"])
             
-            # 只有当选择状态发生变化时才更新并重新运行
             if set(selected_ids) != set(st.session_state.get('kb_selected_refs', [])):
                 st.session_state.kb_selected_refs = selected_ids
                 st.rerun()
@@ -802,7 +802,7 @@ elif page == "知识库管理":
                             st.session_state.kb_generated_answer["record_id"] = record_id
                             print(f"问答记录已保存到数据库，ID: {record_id}")
                         
-                        # 原来的日志记录（可选保留）
+                        # 保存到日志文件（可选）
                         if st.session_state.qa_logger:
                             log_id = st.session_state.qa_logger.log_qa(
                                 question=user_question.strip(),
@@ -817,7 +817,7 @@ elif page == "知识库管理":
                     except Exception as ai_error:
                         st.error(f"AI生成答案失败: {str(ai_error)}")
         
-        # 显示生成的答案
+        # 显示生成的答案（不包含点赞/踩功能）
         if 'kb_generated_answer' in st.session_state and st.session_state.kb_generated_answer:
             st.markdown("---")
             st.subheader("🤖 AI 专业建议")
@@ -844,34 +844,6 @@ elif page == "知识库管理":
             st.markdown('<div class="answer-card">', unsafe_allow_html=True)
             st.markdown(answer_info['answer'])
             st.markdown('</div>', unsafe_allow_html=True)
-            
-            # 反馈机制
-            if record_id and st.session_state.qa_logger:
-                record = st.session_state.qa_logger.get_record(record_id)
-                if record:
-                    current_upvotes = record.get("upvotes", 0)
-                    current_downvotes = record.get("downvotes", 0)
-                    
-                    col_fb1, col_fb2 = st.columns(2)
-                    with col_fb1:
-                        if st.button(f"👍 有帮助 ({current_upvotes})", key=f"upvote_{record_id}"):
-                            user_ip = "user_" + str(hash(st.session_state.session_id))
-                            success = st.session_state.qa_logger.add_feedback(record_id, "upvote", user_ip)
-                            if success:
-                                st.success("感谢您的反馈！")
-                                st.rerun()
-                            else:
-                                st.warning("您已经给过反馈了")
-                    
-                    with col_fb2:
-                        if st.button(f"👎 无帮助 ({current_downvotes})", key=f"downvote_{record_id}"):
-                            user_ip = "user_" + str(hash(st.session_state.session_id))
-                            success = st.session_state.qa_logger.add_feedback(record_id, "downvote", user_ip)
-                            if success:
-                                st.success("感谢您的反馈！")
-                                st.rerun()
-                            else:
-                                st.warning("您已经给过反馈了")
     
     # 清空按钮
     if 'kb_search_results' in st.session_state and st.session_state.kb_search_results:
