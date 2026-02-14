@@ -1,58 +1,61 @@
-# api_server.py - FastAPI服务，将AI测试用例生成功能封装为RESTful API
+# ============================================================================
+# api_server.py - AI测试用例生成系统 RESTful API
+# 修正：/qa/ask 改为 POST + Body，支持选定参考；新增记录导出接口；新增会话数据重置接口
+# 新增：根路径返回 index.html 实现单端口部署
+# 修复：/feedback/export 文件名编码问题
+# 优化：/generate/sync 使用 asyncio.to_thread 避免阻塞事件循环，支持并发访问
+# ============================================================================
+
 import os
 import sys
 import json
 import uuid
 import asyncio
+import traceback
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
+from enum import Enum
+from urllib.parse import quote
 
-# 设置基础路径
 BASE_DIR = "E:/sm-ai"
 DATA_DIR = os.path.join(BASE_DIR, "data")
+sys.path.append(BASE_DIR)
 
-# 创建所需目录
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(os.path.join(DATA_DIR, "api_temp"), exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, "uploads"), exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, "outputs"), exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, "knowledge_base", "files"), exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, "knowledge_base", "faiss_index"), exist_ok=True)
+os.makedirs(os.path.join(BASE_DIR, "log"), exist_ok=True)
 
-# 添加项目路径到Python路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query
-from fastapi.responses import StreamingResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-from pydantic import BaseModel, Field
-from enum import Enum
-
-# 导入后端模块
-from backend.database import Database
-from backend.knowledge_base import KnowledgeBase
-from backend.testcase_generator import TestCaseGenerator
-from backend.document_processor import DocumentProcessor
-from backend.ai_client import AIClient
-
-# 初始化应用
-app = FastAPI(
-    title="AI测试用例生成系统API",
-    description="将AI测试用例生成功能封装为RESTful API",
-    version="1.0.0"
-)
-
-# 添加CORS中间件
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 数据库路径
 DB_PATH = os.path.join(DATA_DIR, "testcase.db")
 
-# 全局变量存储API状态
+try:
+    from backend.database import Database
+    from backend.knowledge_base import KnowledgeBase
+    from backend.testcase_generator import TestCaseGenerator
+    from backend.document_processor import DocumentProcessor
+    from backend.ai_client import AIClient
+    from backend.qa_logger import QALogger
+    print("✅ 成功导入后端模块")
+except ImportError as e:
+    print(f"❌ 导入后端模块失败: {e}")
+    sys.exit(1)
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Body
+from fastapi.responses import StreamingResponse, Response, HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+import uvicorn
+import pandas as pd
+import io
+
+app = FastAPI(title="AI测试用例生成系统API", version="2.1.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+                   allow_methods=["*"], allow_headers=["*"])
+
 api_state = {
     "initialized": False,
     "db": None,
@@ -60,7 +63,8 @@ api_state = {
     "testcase_gen": None,
     "document_processor": None,
     "ai_client": None,
-    "active_sessions": {}  # 存储活动会话
+    "qa_logger": None,
+    "active_sessions": {}
 }
 
 class GenerationStep(str, Enum):
@@ -70,87 +74,79 @@ class GenerationStep(str, Enum):
     FINAL = "final"
 
 class GenerationRequest(BaseModel):
-    """生成请求模型"""
-    session_id: Optional[str] = Field(None, description="会话ID，如果为空则创建新会话")
-    step: GenerationStep = Field(..., description="生成步骤")
-    document_text: Optional[str] = Field(None, description="文档文本内容")
-    previous_result: Optional[str] = Field(None, description="上一步的结果")
-    config: Optional[Dict[str, Any]] = Field(default_factory=dict, description="配置参数")
+    session_id: Optional[str] = None
+    step: GenerationStep
+    document_text: Optional[str] = None
+    previous_result: Optional[str] = None
+    config: Optional[Dict[str, Any]] = {}
 
 class GenerationResponse(BaseModel):
-    """生成响应模型"""
-    session_id: str = Field(..., description="会话ID")
-    step: GenerationStep = Field(..., description="当前步骤")
-    status: str = Field(..., description="状态: success, error, processing")
-    result: Optional[str] = Field(None, description="生成结果")
-    error: Optional[str] = Field(None, description="错误信息")
-    progress: Optional[float] = Field(None, description="进度0-1")
-    next_step: Optional[GenerationStep] = Field(None, description="下一步骤")
-    timestamp: str = Field(..., description="时间戳")
+    session_id: str
+    step: GenerationStep
+    status: str
+    result: Optional[str] = None
+    error: Optional[str] = None
+    progress: Optional[float] = None
+    next_step: Optional[GenerationStep] = None
+    timestamp: str
+
+class FeedbackCreate(BaseModel):
+    record_id: int
+    generator_name: str
+    adoption_rate: int
+    time_saved_hours: float
+    problem_feedback: str
 
 class SessionInfo(BaseModel):
-    """会话信息模型"""
-    session_id: str = Field(..., description="会话ID")
-    created_at: str = Field(..., description="创建时间")
-    last_activity: str = Field(..., description="最后活动时间")
-    current_step: Optional[GenerationStep] = Field(None, description="当前步骤")
-    document_name: Optional[str] = Field(None, description="文档名称")
-    status: str = Field(..., description="会话状态")
+    session_id: str
+    created_at: str
+    last_activity: str
+    current_step: Optional[GenerationStep] = None
+    document_name: Optional[str] = None
+    status: str
 
-class QAResponse(BaseModel):
-    """智能问答响应模型"""
-    question: str = Field(..., description="问题")
-    answer: str = Field(..., description="答案")
-    reference_count: int = Field(0, description="参考文档数量")
-    session_id: Optional[str] = Field(None, description="会话ID")
+class QaRequest(BaseModel):
+    question: str
+    contexts: Optional[List[str]] = None
+    reference_count: int = 10
+    session_id: Optional[str] = None
 
-# 初始化函数
+class QaResponse(BaseModel):
+    question: str
+    answer: str
+    reference_count: int
+    session_id: Optional[str] = None
+
 def initialize_api():
-    """初始化API服务"""
     try:
-        print("正在初始化API服务...")
-        
-        # 初始化数据库
+        print("🔄 正在初始化 API 服务...")
         api_state["db"] = Database(db_path=DB_PATH)
-        
-        # 初始化知识库
         kb_dir = os.path.join(DATA_DIR, "knowledge_base")
         api_state["kb"] = KnowledgeBase(kb_dir=kb_dir, db_path=DB_PATH)
-        
-        # 初始化测试用例生成器
         output_dir = os.path.join(DATA_DIR, "outputs")
         api_state["testcase_gen"] = TestCaseGenerator(output_dir=output_dir)
-        
-        # 初始化文档处理器
         api_state["document_processor"] = DocumentProcessor()
-        
-        # 初始化AI客户端
         api_state["ai_client"] = AIClient(knowledge_base=api_state["kb"])
-        
+        log_dir = os.path.join(BASE_DIR, "log")
+        api_state["qa_logger"] = QALogger(log_dir=log_dir)
         api_state["initialized"] = True
-        print("API服务初始化完成")
+        print("✅ API 服务初始化完成")
         return True
     except Exception as e:
-        print(f"API服务初始化失败: {str(e)}")
-        import traceback
+        print(f"❌ 初始化失败: {e}")
         traceback.print_exc()
         return False
 
-# 在应用启动时初始化
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化"""
     initialize_api()
 
-def generate_session_id() -> str:
-    """生成唯一会话ID"""
+def generate_session_id():
     return f"session_{uuid.uuid4().hex[:8]}_{int(datetime.now().timestamp())}"
 
-def update_session(session_id: str, step: Optional[GenerationStep] = None, 
+def update_session(session_id: str, step: Optional[GenerationStep] = None,
                    document_name: Optional[str] = None):
-    """更新会话信息"""
     now = datetime.now().isoformat()
-    
     if session_id not in api_state["active_sessions"]:
         api_state["active_sessions"][session_id] = {
             "session_id": session_id,
@@ -159,7 +155,7 @@ def update_session(session_id: str, step: Optional[GenerationStep] = None,
             "current_step": step,
             "document_name": document_name,
             "status": "active",
-            "data": {}  # 存储会话数据
+            "data": {}
         }
     else:
         api_state["active_sessions"][session_id]["last_activity"] = now
@@ -169,295 +165,90 @@ def update_session(session_id: str, step: Optional[GenerationStep] = None,
             api_state["active_sessions"][session_id]["document_name"] = document_name
 
 def cleanup_old_sessions():
-    """清理过期会话（24小时未活动）"""
     now = datetime.now()
-    expired_sessions = []
-    
-    for session_id, session in api_state["active_sessions"].items():
-        last_activity = datetime.fromisoformat(session["last_activity"])
-        if (now - last_activity).total_seconds() > 24 * 3600:  # 24小时
-            expired_sessions.append(session_id)
-    
-    for session_id in expired_sessions:
-        del api_state["active_sessions"][session_id]
-        print(f"已清理过期会话: {session_id}")
+    expired = []
+    for sid, sess in api_state["active_sessions"].items():
+        last = datetime.fromisoformat(sess["last_activity"])
+        if (now - last).total_seconds() > 86400:
+            expired.append(sid)
+    for sid in expired:
+        del api_state["active_sessions"][sid]
 
-async def stream_generation(step: GenerationStep, document_text: str, session_id: str):
-    """流式生成函数"""
-    try:
-        if not api_state["initialized"]:
-            yield json.dumps({
-                "session_id": session_id,
-                "step": step,
-                "status": "error",
-                "error": "API服务未初始化",
-                "timestamp": datetime.now().isoformat()
-            }) + "\n"
-            return
-        
-        # 更新会话
-        update_session(session_id, step)
-        
-        if step == GenerationStep.SUMMARY:
-            # 第一步：专业需求文档分析
-            yield json.dumps({
-                "session_id": session_id,
-                "step": step,
-                "status": "processing",
-                "progress": 0.1,
-                "message": "开始文档分析...",
-                "timestamp": datetime.now().isoformat()
-            }) + "\n"
-            
-            # 模拟流式输出
-            steps = ["文档初步解析", "功能点识别", "问题识别", "测试关注点分析", "自我检查", "生成综合报告"]
-            for i, step_name in enumerate(steps):
-                await asyncio.sleep(0.5)  # 模拟处理时间
-                yield json.dumps({
-                    "session_id": session_id,
-                    "step": step,
-                    "status": "processing",
-                    "progress": (i + 1) / len(steps) * 0.8,
-                    "message": f"正在进行：{step_name}",
-                    "timestamp": datetime.now().isoformat()
-                }) + "\n"
-            
-            # 实际生成
-            try:
-                summary = api_state["ai_client"].enhanced_generate_summary_step(document_text)
-                
-                # 存储结果到会话
-                if session_id in api_state["active_sessions"]:
-                    api_state["active_sessions"][session_id]["data"]["summary"] = summary
-                
-                yield json.dumps({
-                    "session_id": session_id,
-                    "step": step,
-                    "status": "success",
-                    "result": summary,
-                    "progress": 1.0,
-                    "next_step": GenerationStep.TEST_POINTS,
-                    "timestamp": datetime.now().isoformat()
-                }) + "\n"
-            except Exception as e:
-                yield json.dumps({
-                    "session_id": session_id,
-                    "step": step,
-                    "status": "error",
-                    "error": f"文档分析失败: {str(e)}",
-                    "timestamp": datetime.now().isoformat()
-                }) + "\n"
-        
-        elif step == GenerationStep.TEST_POINTS:
-            # 第二步：基于功能点的测试点详细拆分
-            yield json.dumps({
-                "session_id": session_id,
-                "step": step,
-                "status": "processing",
-                "progress": 0.1,
-                "message": "开始测试点生成...",
-                "timestamp": datetime.now().isoformat()
-            }) + "\n"
-            
-            steps = ["提取功能点", "等价类划分", "边界值分析", "因果图分析", "场景分析", "生成测试点"]
-            for i, step_name in enumerate(steps):
-                await asyncio.sleep(0.5)  # 模拟处理时间
-                yield json.dumps({
-                    "session_id": session_id,
-                    "step": step,
-                    "status": "processing",
-                    "progress": (i + 1) / len(steps) * 0.8,
-                    "message": f"正在执行：{step_name}",
-                    "timestamp": datetime.now().isoformat()
-                }) + "\n"
-            
-            # 实际生成
-            try:
-                analysis_report = api_state["active_sessions"][session_id]["data"].get("summary", "")
-                test_points, analysis_report = api_state["ai_client"].enhanced_generate_test_points_step(analysis_report)
-                
-                # 存储结果到会话
-                if session_id in api_state["active_sessions"]:
-                    api_state["active_sessions"][session_id]["data"]["test_points"] = test_points
-                    api_state["active_sessions"][session_id]["data"]["analysis_report"] = analysis_report
-                
-                yield json.dumps({
-                    "session_id": session_id,
-                    "step": step,
-                    "status": "success",
-                    "result": test_points,
-                    "progress": 1.0,
-                    "next_step": GenerationStep.TEST_CASES,
-                    "timestamp": datetime.now().isoformat()
-                }) + "\n"
-            except Exception as e:
-                yield json.dumps({
-                    "session_id": session_id,
-                    "step": step,
-                    "status": "error",
-                    "error": f"测试点生成失败: {str(e)}",
-                    "timestamp": datetime.now().isoformat()
-                }) + "\n"
-        
-        elif step == GenerationStep.TEST_CASES:
-            # 第三步：智能问答生成测试用例
-            yield json.dumps({
-                "session_id": session_id,
-                "step": step,
-                "status": "processing",
-                "progress": 0.1,
-                "message": "开始测试用例生成...",
-                "timestamp": datetime.now().isoformat()
-            }) + "\n"
-            
-            steps = ["解析测试点", "准备智能问答", "生成测试用例", "进行完整性检查", "生成验证报告"]
-            for i, step_name in enumerate(steps):
-                await asyncio.sleep(0.5)  # 模拟处理时间
-                yield json.dumps({
-                    "session_id": session_id,
-                    "step": step,
-                    "status": "processing",
-                    "progress": (i + 1) / len(steps) * 0.8,
-                    "message": f"正在执行：{step_name}",
-                    "timestamp": datetime.now().isoformat()
-                }) + "\n"
-            
-            # 实际生成
-            try:
-                test_points = api_state["active_sessions"][session_id]["data"].get("test_points", "")
-                test_cases, validation_report, test_cases_details = api_state["ai_client"].enhanced_generate_test_cases_step(test_points)
-                
-                # 存储结果到会话
-                if session_id in api_state["active_sessions"]:
-                    api_state["active_sessions"][session_id]["data"]["test_cases"] = test_cases
-                    api_state["active_sessions"][session_id]["data"]["validation_report"] = validation_report
-                    api_state["active_sessions"][session_id]["data"]["test_cases_details"] = test_cases_details
-                
-                yield json.dumps({
-                    "session_id": session_id,
-                    "step": step,
-                    "status": "success",
-                    "result": test_cases,
-                    "progress": 1.0,
-                    "next_step": GenerationStep.FINAL,
-                    "timestamp": datetime.now().isoformat()
-                }) + "\n"
-            except Exception as e:
-                yield json.dumps({
-                    "session_id": session_id,
-                    "step": step,
-                    "status": "error",
-                    "error": f"测试用例生成失败: {str(e)}",
-                    "timestamp": datetime.now().isoformat()
-                }) + "\n"
-        
-        elif step == GenerationStep.FINAL:
-            # 第四步：最终输出
-            yield json.dumps({
-                "session_id": session_id,
-                "step": step,
-                "status": "success",
-                "message": "生成流程完成",
-                "progress": 1.0,
-                "timestamp": datetime.now().isoformat()
-            }) + "\n"
-    
-    except Exception as e:
-        yield json.dumps({
-            "session_id": session_id,
-            "step": step,
-            "status": "error",
-            "error": f"生成过程中发生错误: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        }) + "\n"
-
-# API路由定义
+# ---------------------------- API 路由 ----------------------------
 @app.get("/")
 async def root():
-    """API根端点"""
-    return {
-        "service": "AI测试用例生成系统API",
-        "version": "1.0.0",
-        "status": "running",
-        "initialized": api_state["initialized"]
-    }
+    # 读取 index.html 文件并返回
+    try:
+        html_path = os.path.join(os.path.dirname(__file__), "index.html")
+        with open(html_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return HTMLResponse(content=content)
+    except Exception as e:
+        return {"error": f"无法加载前端页面: {e}"}
 
 @app.get("/health")
 async def health_check():
-    """健康检查端点"""
-    return {
-        "status": "healthy" if api_state["initialized"] else "unhealthy",
-        "initialized": api_state["initialized"],
-        "active_sessions": len(api_state["active_sessions"])
-    }
+    return {"status": "healthy" if api_state["initialized"] else "unhealthy",
+            "initialized": api_state["initialized"],
+            "active_sessions": len(api_state["active_sessions"])}
 
-@app.post("/sessions", response_model=Dict[str, str])
+# ---------- 会话管理 ----------
+@app.post("/sessions")
 async def create_session():
-    """创建新会话"""
     session_id = generate_session_id()
     update_session(session_id)
-    
-    return {
-        "session_id": session_id,
-        "message": "会话创建成功",
-        "timestamp": datetime.now().isoformat()
-    }
+    return {"session_id": session_id, "message": "会话创建成功", "timestamp": datetime.now().isoformat()}
 
-@app.get("/sessions", response_model=List[SessionInfo])
+@app.get("/sessions")
 async def list_sessions():
-    """获取所有活跃会话"""
     cleanup_old_sessions()
-    
-    sessions = []
-    for session_id, session_data in api_state["active_sessions"].items():
-        sessions.append(SessionInfo(**session_data))
-    
-    return sessions
+    return [SessionInfo(**sess) for sess in api_state["active_sessions"].values()]
 
-@app.get("/sessions/{session_id}", response_model=SessionInfo)
+@app.get("/sessions/{session_id}")
 async def get_session(session_id: str):
-    """获取特定会话信息"""
     if session_id not in api_state["active_sessions"]:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    
+        raise HTTPException(404, "会话不存在")
     return SessionInfo(**api_state["active_sessions"][session_id])
 
 @app.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
-    """删除会话"""
     if session_id in api_state["active_sessions"]:
         del api_state["active_sessions"][session_id]
-        return {"message": "会话已删除", "session_id": session_id}
-    else:
-        raise HTTPException(status_code=404, detail="会话不存在")
+        return {"message": "会话已删除"}
+    raise HTTPException(404, "会话不存在")
 
+@app.delete("/sessions/{session_id}/data")
+async def clear_session_data(session_id: str):
+    """清空会话中的中间数据（供前端重置流程）"""
+    if session_id not in api_state["active_sessions"]:
+        raise HTTPException(404, "会话不存在")
+    api_state["active_sessions"][session_id]["data"] = {}
+    api_state["active_sessions"][session_id]["current_step"] = None
+    return {"message": "会话数据已清空"}
+
+@app.get("/sessions/{session_id}/data")
+async def get_session_data(session_id: str):
+    if session_id not in api_state["active_sessions"]:
+        raise HTTPException(404, "会话不存在")
+    return api_state["active_sessions"][session_id]["data"]
+
+# ---------- 文档上传 ----------
 @app.post("/upload/document")
-async def upload_document(
-    file: UploadFile = File(...),
-    session_id: Optional[str] = Query(None, description="会话ID，如果为空则创建新会话")
-):
-    """上传文档文件"""
+async def upload_document(file: UploadFile = File(...), session_id: Optional[str] = Query(None)):
     try:
         if not session_id:
             session_id = generate_session_id()
-        
-        # 保存上传的文件
         temp_dir = os.path.join(DATA_DIR, "api_temp")
         os.makedirs(temp_dir, exist_ok=True)
-        
         file_path = os.path.join(temp_dir, f"{session_id}_{file.filename}")
+        content = await file.read()
         with open(file_path, "wb") as f:
-            content = await file.read()
             f.write(content)
-        
-        # 读取文档内容
-        document_text = api_state["document_processor"].read_file(file_path)
-        
-        # 更新会话
+        doc_text = api_state["document_processor"].read_file(file_path)
         update_session(session_id, GenerationStep.SUMMARY, file.filename)
-        api_state["active_sessions"][session_id]["data"]["document_text"] = document_text
+        api_state["active_sessions"][session_id]["data"]["document_text"] = doc_text
         api_state["active_sessions"][session_id]["data"]["file_path"] = file_path
-        
+        api_state["active_sessions"][session_id]["data"]["original_filename"] = file.filename
         return {
             "session_id": session_id,
             "filename": file.filename,
@@ -466,104 +257,54 @@ async def upload_document(
             "next_step": "summary",
             "timestamp": datetime.now().isoformat()
         }
-    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
+        raise HTTPException(500, f"文件上传失败: {e}")
 
-@app.post("/generate/stream")
-async def generate_stream(request: GenerationRequest):
-    """流式生成测试用例（SSE）"""
-    # 检查服务状态
-    if not api_state["initialized"]:
-        raise HTTPException(status_code=503, detail="API服务未初始化")
-    
-    # 获取或创建会话ID
-    session_id = request.session_id or generate_session_id()
-    
-    # 获取文档文本
-    document_text = request.document_text
-    if not document_text and session_id in api_state["active_sessions"]:
-        document_text = api_state["active_sessions"][session_id]["data"].get("document_text", "")
-    
-    if not document_text and request.step == GenerationStep.SUMMARY:
-        raise HTTPException(status_code=400, detail="文档文本不能为空")
-    
-    # 返回流式响应
-    return StreamingResponse(
-        stream_generation(request.step, document_text, session_id),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
-    )
-
-@app.post("/generate/sync")
+# ---------- 同步生成（已优化为异步非阻塞）----------
+@app.post("/generate/sync", response_model=GenerationResponse)
 async def generate_sync(request: GenerationRequest):
-    """同步生成测试用例（一次性返回）"""
-    # 检查服务状态
     if not api_state["initialized"]:
-        raise HTTPException(status_code=503, detail="API服务未初始化")
-    
-    # 获取或创建会话ID
+        raise HTTPException(503, "服务未初始化")
     session_id = request.session_id or generate_session_id()
-    
-    # 获取文档文本
-    document_text = request.document_text
-    if not document_text and session_id in api_state["active_sessions"]:
-        document_text = api_state["active_sessions"][session_id]["data"].get("document_text", "")
-    
-    if not document_text and request.step == GenerationStep.SUMMARY:
-        raise HTTPException(status_code=400, detail="文档文本不能为空")
-    
+    doc_text = request.document_text
+    if not doc_text and session_id in api_state["active_sessions"]:
+        doc_text = api_state["active_sessions"][session_id]["data"].get("document_text", "")
     try:
         result = None
         next_step = None
-        
         if request.step == GenerationStep.SUMMARY:
-            # 第一步：专业需求文档分析
-            result = api_state["ai_client"].enhanced_generate_summary_step(document_text)
+            if not doc_text:
+                raise HTTPException(400, "文档内容不能为空")
+            # 放入线程池执行
+            result = await asyncio.to_thread(
+                api_state["ai_client"].enhanced_generate_summary_step, doc_text
+            )
             next_step = GenerationStep.TEST_POINTS
-            
-            # 存储结果到会话
             update_session(session_id, GenerationStep.SUMMARY)
-            if session_id in api_state["active_sessions"]:
-                api_state["active_sessions"][session_id]["data"]["summary"] = result
-        
+            api_state["active_sessions"][session_id]["data"]["summary"] = result
+
         elif request.step == GenerationStep.TEST_POINTS:
-            # 第二步：基于功能点的测试点详细拆分
-            analysis_report = request.previous_result or ""
-            if not analysis_report and session_id in api_state["active_sessions"]:
-                analysis_report = api_state["active_sessions"][session_id]["data"].get("summary", "")
-            
-            test_points, analysis_report = api_state["ai_client"].enhanced_generate_test_points_step(analysis_report)
-            result = test_points
+            analysis = request.previous_result or api_state["active_sessions"][session_id]["data"].get("summary", "")
+            # 封装多返回值函数
+            def _run_test_points():
+                return api_state["ai_client"].enhanced_generate_test_points_step(analysis)
+            result, analysis_report = await asyncio.to_thread(_run_test_points)
             next_step = GenerationStep.TEST_CASES
-            
-            # 存储结果到会话
             update_session(session_id, GenerationStep.TEST_POINTS)
-            if session_id in api_state["active_sessions"]:
-                api_state["active_sessions"][session_id]["data"]["test_points"] = test_points
-                api_state["active_sessions"][session_id]["data"]["analysis_report"] = analysis_report
-        
+            api_state["active_sessions"][session_id]["data"]["test_points"] = result
+            api_state["active_sessions"][session_id]["data"]["analysis_report"] = analysis_report
+
         elif request.step == GenerationStep.TEST_CASES:
-            # 第三步：智能问答生成测试用例
-            test_points = request.previous_result or ""
-            if not test_points and session_id in api_state["active_sessions"]:
-                test_points = api_state["active_sessions"][session_id]["data"].get("test_points", "")
-            
-            test_cases, validation_report, test_cases_details = api_state["ai_client"].enhanced_generate_test_cases_step(test_points)
-            result = test_cases
+            test_points = request.previous_result or api_state["active_sessions"][session_id]["data"].get("test_points", "")
+            def _run_test_cases():
+                return api_state["ai_client"].enhanced_generate_test_cases_step(test_points)
+            result, validation, details = await asyncio.to_thread(_run_test_cases)
             next_step = GenerationStep.FINAL
-            
-            # 存储结果到会话
             update_session(session_id, GenerationStep.TEST_CASES)
-            if session_id in api_state["active_sessions"]:
-                api_state["active_sessions"][session_id]["data"]["test_cases"] = test_cases
-                api_state["active_sessions"][session_id]["data"]["validation_report"] = validation_report
-                api_state["active_sessions"][session_id]["data"]["test_cases_details"] = test_cases_details
-        
+            api_state["active_sessions"][session_id]["data"]["test_cases"] = result
+            api_state["active_sessions"][session_id]["data"]["validation"] = validation
+            api_state["active_sessions"][session_id]["data"]["details"] = details
+
         return GenerationResponse(
             session_id=session_id,
             step=request.step,
@@ -572,7 +313,6 @@ async def generate_sync(request: GenerationRequest):
             next_step=next_step,
             timestamp=datetime.now().isoformat()
         )
-    
     except Exception as e:
         return GenerationResponse(
             session_id=session_id,
@@ -582,106 +322,202 @@ async def generate_sync(request: GenerationRequest):
             timestamp=datetime.now().isoformat()
         )
 
-@app.post("/export/excel")
-async def export_excel(
-    session_id: str = Query(..., description="会话ID"),
-    filename: Optional[str] = Query(None, description="输出文件名")
-):
-    """导出Excel测试用例文件"""
+# ---------- 导出Excel ----------
+@app.get("/export/excel")
+async def export_excel(session_id: str = Query(...)):
     if session_id not in api_state["active_sessions"]:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    
-    session_data = api_state["active_sessions"][session_id]
-    test_cases = session_data["data"].get("test_cases", "")
-    
+        raise HTTPException(404, "会话不存在")
+    sess = api_state["active_sessions"][session_id]
+    test_cases = sess["data"].get("test_cases", "")
     if not test_cases:
-        raise HTTPException(status_code=400, detail="没有可导出的测试用例数据")
-    
+        raise HTTPException(400, "没有可导出的测试用例")
+    original_name = sess.get("document_name", "test_cases")
     try:
-        # 使用原始文件名或自定义文件名
-        original_filename = session_data.get("document_name", "test_cases")
-        if filename:
-            base_name = filename
-        else:
-            base_name = os.path.splitext(original_filename)[0]
-        
-        # 生成Excel文件
-        output_path = api_state["testcase_gen"].generate_excel(test_cases, base_name)
-        
-        # 将文件内容读取为字节
+        output_path = api_state["testcase_gen"].generate_excel(test_cases, original_name)
         with open(output_path, "rb") as f:
-            file_content = f.read()
-        
-        # 返回文件下载
-        from fastapi.responses import Response
+            content = f.read()
+        filename = os.path.basename(output_path)
+        encoded_filename = quote(filename)
+
+        # ---------- 新增：保存记录到数据库 ----------
+        if "record_id" not in sess["data"]:
+            original_filename = sess["data"].get("original_filename", original_name)
+            file_path = sess["data"].get("file_path", "")
+            summary = sess["data"].get("summary", "")
+            requirement_analysis = sess["data"].get("test_points", "")  # 对应数据库字段
+            test_validation = sess["data"].get("validation", "")
+
+            record_id = api_state["db"].add_record(
+                original_filename=original_filename,
+                file_path=file_path,
+                output_filename=filename,
+                output_path=output_path,
+                summary=summary,
+                requirement_analysis=requirement_analysis,
+                decision_table="",  # 未使用
+                test_cases=test_cases,
+                test_validation=test_validation
+            )
+            sess["data"]["record_id"] = record_id  # 标记已保存，避免重复
+            print(f"✅ 记录已保存，ID: {record_id}")
+
         return Response(
-            content=file_content,
+            content=content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={
-                "Content-Disposition": f"attachment; filename={os.path.basename(output_path)}"
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
             }
         )
-    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"导出Excel失败: {str(e)}")
+        raise HTTPException(500, f"导出失败: {e}")
 
-@app.post("/qa/ask", response_model=QAResponse)
-async def ask_question(
-    question: str = Query(..., description="问题内容"),
-    reference_count: int = Query(10, description="参考文档数量"),
-    session_id: Optional[str] = Query(None, description="会话ID")
-):
-    """智能问答"""
+# ---------- 根据记录ID导出Excel（历史记录下载）----------
+@app.get("/records/{record_id}/export")
+async def export_record_excel(record_id: int):
     try:
-        # 使用知识库搜索
-        search_k = min(50, reference_count * 2)
-        knowledge_results = api_state["kb"].search_with_score(question, k=search_k)
-        
-        # 选择相关结果
-        selected_contexts = []
-        for content, metadata, distance in knowledge_results:
-            similarity = api_state["kb"].get_similarity_percentage(distance)
-            if similarity >= 65:  # 相似度阈值
-                source = metadata.get('source', '未知来源')
-                context_text = f"来源: {source}\n相似度: {similarity:.1f}%\n\n{content}"
-                selected_contexts.append(context_text)
-        
-        # 限制上下文数量
-        selected_contexts = selected_contexts[:reference_count]
-        
-        # 生成答案
-        answer = api_state["ai_client"].answer_with_knowledge(question, selected_contexts)
-        
-        # 保存到数据库
-        record_id = api_state["db"].add_qa_record(
-            question=question,
-            answer=answer,
-            reference_count=len(selected_contexts)
+        records = api_state["db"].get_records()
+        record = next((r for r in records if r["id"] == record_id), None)
+        if not record:
+            raise HTTPException(404, "记录不存在")
+        test_cases = record.get("test_cases", "")
+        if not test_cases:
+            raise HTTPException(400, "该记录没有测试用例数据")
+        original_filename = record.get("original_filename", "历史记录")
+        output_path = api_state["testcase_gen"].generate_excel(test_cases, original_filename)
+        with open(output_path, "rb") as f:
+            content = f.read()
+        filename = os.path.basename(output_path)
+        encoded_filename = quote(filename)
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            }
         )
-        
-        return QAResponse(
-            question=question,
-            answer=answer,
-            reference_count=len(selected_contexts),
-            session_id=session_id
-        )
-    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"智能问答失败: {str(e)}")
+        raise HTTPException(500, f"导出失败: {e}")
+
+# ---------- 记录管理 ----------
+@app.get("/records")
+async def get_records():
+    try:
+        return api_state["db"].get_records()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/records/{record_id}")
+async def get_record(record_id: int):
+    try:
+        records = api_state["db"].get_records()
+        record = next((r for r in records if r["id"] == record_id), None)
+        if not record:
+            raise HTTPException(404, "记录不存在")
+        return record
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+# ---------- 反馈管理 ----------
+@app.post("/feedback")
+async def add_feedback(feedback: FeedbackCreate):
+    try:
+        fid = api_state["db"].add_feedback(
+            record_id=feedback.record_id,
+            generator_name=feedback.generator_name,
+            adoption_rate=feedback.adoption_rate,
+            time_saved_hours=feedback.time_saved_hours,
+            problem_feedback=feedback.problem_feedback
+        )
+        if fid > 0:
+            return {"id": fid, "message": "反馈提交成功"}
+        raise HTTPException(500, "反馈保存失败")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/feedback")
+async def get_all_feedback():
+    try:
+        return api_state["db"].get_all_feedback()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/feedback/export")
+async def export_feedback(start_date: str, end_date: str):
+    try:
+        feedbacks = api_state["db"].get_feedback_by_date_range(start_date, end_date)
+        if not feedbacks:
+            return Response(content="无数据", media_type="text/plain", status_code=204)
+        df = pd.DataFrame(feedbacks)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='反馈记录', index=False)
+        output.seek(0)
+        filename = f"反馈导出_{start_date}_{end_date}.xlsx"
+        encoded_filename = quote(filename)
+        return Response(
+            content=output.read(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(500, f"导出失败: {e}")
+
+# ---------- 知识库管理 ----------
+@app.post("/knowledge/upload")
+async def upload_knowledge_file(file: UploadFile = File(...)):
+    try:
+        file_path = os.path.join(api_state["kb"].KB_FILES_DIR, file.filename)
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+        success = api_state["kb"].add_document(file_path)
+        if not success:
+            raise HTTPException(500, "索引失败")
+        db_success = api_state["db"].add_knowledge_file(file.filename, file_path)
+        return {"filename": file.filename, "path": file_path, "indexed": success, "db_recorded": db_success}
+    except Exception as e:
+        raise HTTPException(500, f"上传失败: {e}")
+
+@app.get("/knowledge/files")
+async def get_knowledge_files():
+    try:
+        return api_state["kb"].get_all_documents()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.delete("/knowledge/files/{file_id}")
+async def delete_knowledge_file(file_id: int):
+    try:
+        files = api_state["db"].get_knowledge_documents()
+        target = next((f for f in files if f["id"] == file_id), None)
+        if not target:
+            raise HTTPException(404, "文件不存在")
+        file_path = target["file_path"]
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        api_state["db"].delete_knowledge_file(file_id)
+        api_state["kb"].rebuild_index()
+        return {"message": "删除成功", "file_id": file_id}
+    except Exception as e:
+        raise HTTPException(500, f"删除失败: {e}")
+
+@app.post("/knowledge/rebuild")
+async def rebuild_knowledge_index():
+    try:
+        success = api_state["kb"].rebuild_index()
+        return {"success": success, "message": "索引重建完成" if success else "索引重建失败"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 @app.get("/knowledge/search")
-async def search_knowledge(
-    query: str = Query(..., description="搜索查询"),
-    limit: int = Query(10, description="结果数量"),
-    min_similarity: float = Query(65.0, description="最小相似度")
-):
-    """搜索知识库"""
+async def search_knowledge(query: str = Query(...), limit: int = 10, min_similarity: float = 65.0):
     try:
-        search_k = min(50, limit * 2)
-        knowledge_results = api_state["kb"].search_with_score(query, k=search_k)
-        
         results = []
-        for content, metadata, distance in knowledge_results:
+        search_k = min(50, limit * 2)
+        raw_results = api_state["kb"].search_with_score(query, k=search_k)
+        for content, metadata, distance in raw_results:
             similarity = api_state["kb"].get_similarity_percentage(distance)
             if similarity >= min_similarity:
                 results.append({
@@ -690,32 +526,74 @@ async def search_knowledge(
                     "similarity": similarity,
                     "distance": distance
                 })
-        
-        # 按相似度排序并限制数量
         results.sort(key=lambda x: x["similarity"], reverse=True)
         results = results[:limit]
-        
-        return {
-            "query": query,
-            "results": results,
-            "total_found": len(results),
-            "timestamp": datetime.now().isoformat()
-        }
-    
+        return {"query": query, "results": results, "total": len(results), "timestamp": datetime.now().isoformat()}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"知识库搜索失败: {str(e)}")
+        raise HTTPException(500, f"搜索失败: {e}")
 
-# 启动脚本
+# ---------- 智能问答（POST，接收选中的参考）----------
+@app.post("/qa/ask", response_model=QaResponse)
+async def ask_question(request: QaRequest = Body(...)):
+    """基于选定参考或知识库搜索生成答案"""
+    try:
+        if request.contexts and len(request.contexts) > 0:
+            selected = request.contexts
+            reference_count = len(selected)
+        else:
+            search_k = min(50, request.reference_count * 2)
+            raw_results = api_state["kb"].search_with_score(request.question, k=search_k)
+            selected = []
+            for content, metadata, distance in raw_results:
+                similarity = api_state["kb"].get_similarity_percentage(distance)
+                if similarity >= 65:
+                    source = metadata.get('source', '未知来源')
+                    selected.append(f"来源: {source}\n相似度: {similarity:.1f}%\n\n{content}")
+                if len(selected) >= request.reference_count:
+                    break
+            reference_count = len(selected)
+
+        answer = api_state["ai_client"].answer_with_knowledge(request.question, selected)
+        
+        # 记录到数据库
+        record_id = api_state["db"].add_qa_record(request.question, answer, reference_count)
+        # 记录到日志
+        if api_state["qa_logger"]:
+            api_state["qa_logger"].log_qa(request.question, answer, reference_count)
+        
+        return QaResponse(
+            question=request.question,
+            answer=answer,
+            reference_count=reference_count,
+            session_id=request.session_id
+        )
+    except Exception as e:
+        raise HTTPException(500, f"问答失败: {e}")
+
+@app.get("/qa/history")
+async def get_qa_history(limit: int = 50):
+    try:
+        return api_state["db"].get_qa_records(limit)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.delete("/qa/history/{record_id}")
+async def delete_qa_record(record_id: int):
+    try:
+        success = api_state["db"].delete_qa_record(record_id)
+        return {"success": success, "message": "删除成功" if success else "删除失败"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+# ---------- favicon ----------
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)
+
 if __name__ == "__main__":
-    print("启动AI测试用例生成系统API服务...")
-    print(f"API地址: http://localhost:8000")
-    print(f"API文档: http://localhost:8000/docs")
-    print(f"备用文档: http://localhost:8000/redoc")
-    
-    uvicorn.run(
-        "api_server:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    print("=" * 60)
+    print("🚀 启动 AI测试用例生成系统 API 服务 (v2.1.0)")
+    print(f"📁 数据目录: {DATA_DIR}")
+    print(f"🔗 访问地址: http://你的IP:8000")
+    print("=" * 60)
+    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)

@@ -65,8 +65,111 @@ class Database:
             )
         ''')
         
+        # 创建测试用例反馈表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS testcase_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                record_id INTEGER NOT NULL,
+                generator_name TEXT,
+                adoption_rate INTEGER DEFAULT 0,
+                time_saved_hours REAL DEFAULT 0,
+                problem_feedback TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (record_id) REFERENCES records (id)
+            )
+        ''')
+        
         conn.commit()
         print(f"数据库表已创建/检查完成，路径: {self.db_path}")
+    
+    def add_feedback(self, record_id: int, generator_name: str, adoption_rate: int, 
+                     time_saved_hours: float, problem_feedback: str) -> int:
+        """添加测试用例反馈"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO testcase_feedback 
+                (record_id, generator_name, adoption_rate, time_saved_hours, problem_feedback)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (record_id, generator_name, adoption_rate, time_saved_hours, problem_feedback))
+            
+            conn.commit()
+            feedback_id = cursor.lastrowid
+            print(f"成功添加反馈记录，ID: {feedback_id}")
+            return feedback_id
+        except Exception as e:
+            print(f"添加反馈记录失败: {str(e)}")
+            print(traceback.format_exc())
+            conn.rollback()
+            return -1
+    
+    def get_feedback_by_record_id(self, record_id: int) -> List[Dict]:
+        """根据记录ID获取反馈"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT * FROM testcase_feedback 
+                WHERE record_id = ?
+                ORDER BY created_at DESC
+            ''', (record_id,))
+            rows = cursor.fetchall()
+            
+            return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"获取反馈记录失败: {str(e)}")
+            return []
+    
+    def get_all_feedback(self) -> List[Dict]:
+        """获取所有反馈记录"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT 
+                    f.*,
+                    r.original_filename as requirement_doc,
+                    r.output_filename as testcase_file,
+                    r.created_at as record_created_at
+                FROM testcase_feedback f
+                LEFT JOIN records r ON f.record_id = r.id
+                ORDER BY f.created_at DESC
+            ''')
+            rows = cursor.fetchall()
+            
+            return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"获取所有反馈记录失败: {str(e)}")
+            return []
+    
+    def get_feedback_by_date_range(self, start_date: str, end_date: str) -> List[Dict]:
+        """根据日期范围获取反馈记录"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT 
+                    f.*,
+                    r.original_filename as requirement_doc,
+                    r.output_filename as testcase_file,
+                    r.created_at as record_created_at
+                FROM testcase_feedback f
+                LEFT JOIN records r ON f.record_id = r.id
+                WHERE date(f.created_at) >= date(?) 
+                  AND date(f.created_at) <= date(?)
+                ORDER BY f.created_at DESC
+            ''', (start_date, end_date))
+            rows = cursor.fetchall()
+            
+            return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"按日期范围获取反馈记录失败: {str(e)}")
+            return []
     
     def add_qa_record(self, question: str, answer: str, reference_count: int = 0) -> int:
         """添加智能问答记录（简化版）"""

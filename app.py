@@ -1,4 +1,4 @@
-# app.py - 保留QA记录功能，但不包括点赞/踩和日报月报
+# app.py - 保留QA记录功能，包含测试用例反馈和导出功能
 # 禁用文件监视器避免错误
 import os
 import sys
@@ -6,8 +6,9 @@ from pathlib import Path
 import traceback
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict
+import io
 
 # 设置基础路径
 BASE_DIR = "E:/sm-ai"
@@ -52,6 +53,65 @@ def save_uploaded_file(uploaded_file, upload_dir=os.path.join(DATA_DIR, "uploads
         f.write(uploaded_file.getbuffer())
     return file_path
 
+# 反馈表单函数
+def show_feedback_form(record_id, original_filename, output_filename):
+    """显示反馈表单"""
+    with st.form(key=f"feedback_form_{record_id}", clear_on_submit=True):
+        st.subheader("📝 测试用例反馈")
+        
+        # 显示基本信息
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info(f"**需求文档**: {original_filename}")
+        with col2:
+            st.info(f"**测试用例**: {output_filename}")
+        
+        # 反馈表单字段
+        generator_name = st.text_input("生成人", value="", 
+                                     placeholder="请输入您的姓名")
+        
+        adoption_rate = st.slider("采用率 (%)", 0, 100, 0, 10,
+                                help="实际使用这些测试用例的比例")
+        
+        time_saved_hours = st.number_input("节约时间 (小时)", min_value=0.0, max_value=1000.0, 
+                                         value=0.0, step=0.5,
+                                         help="相比手工编写节省的时间")
+        
+        problem_feedback = st.text_area("问题反馈", height=150,
+                                      placeholder="请描述遇到的问题或改进建议...")
+        
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            submit_feedback = st.form_submit_button("✅ 提交反馈")
+        with col2:
+            cancel_feedback = st.form_submit_button("❌ 取消")
+        
+        if submit_feedback:
+            if not generator_name.strip():
+                st.error("请填写生成人姓名")
+                return False
+            
+            try:
+                feedback_id = st.session_state.db.add_feedback(
+                    record_id=record_id,
+                    generator_name=generator_name,
+                    adoption_rate=adoption_rate,
+                    time_saved_hours=time_saved_hours,
+                    problem_feedback=problem_feedback
+                )
+                
+                if feedback_id > 0:
+                    st.success("✅ 反馈已提交！")
+                    return True
+                else:
+                    st.error("提交失败，请重试")
+                    return False
+            except Exception as e:
+                st.error(f"提交失败: {str(e)}")
+                return False
+        
+        return False
+
 # 初始化会话状态
 if 'initialized' not in st.session_state:
     try:
@@ -83,7 +143,6 @@ st.sidebar.title("导航")
 page = st.sidebar.radio("选择页面", ["生成测试用例", "历史记录", "知识库管理"])
 
 if page == "生成测试用例":
-    # ... (这部分代码保持不变) ...
     st.title("AI 测试用例生成系统")
     
     # 初始化会话状态
@@ -385,13 +444,18 @@ if page == "生成测试用例":
                             test_validation=st.session_state.current_test_validation
                         )
                         st.info(f"记录已保存到数据库，ID: {record_id}")
+                        
+                        # 在成功生成后，立即显示反馈表单
+                        st.session_state['recently_generated_record_id'] = record_id
+                        st.session_state['show_feedback_after_generate'] = True
+                        
                     except Exception as db_error:
                         st.warning(f"保存记录失败: {str(db_error)}")
                     
                     if os.path.exists(output_path):
                         with open(output_path, "rb") as f:
                             st.download_button(
-                                label="下载 Excel 测试用例",
+                                label="📥 下载 Excel 测试用例",
                                 data=f,
                                 file_name=os.path.basename(output_path),
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -403,6 +467,33 @@ if page == "生成测试用例":
                 except Exception as excel_error:
                     st.error(f"生成 Excel 文件失败: {str(excel_error)}")
                     st.text(traceback.format_exc())
+        
+        # 在生成成功后显示反馈表单
+        if st.session_state.get('show_feedback_after_generate', False) and \
+           st.session_state.get('recently_generated_record_id'):
+            
+            st.markdown("---")
+            st.subheader("📝 请提供反馈")
+            
+            record_id = st.session_state['recently_generated_record_id']
+            
+            # 获取记录信息
+            try:
+                records = st.session_state.db.get_records()
+                current_record = next((r for r in records if r['id'] == record_id), None)
+                
+                if current_record:
+                    if show_feedback_form(
+                        record_id=record_id,
+                        original_filename=current_record['original_filename'],
+                        output_filename=current_record['output_filename']
+                    ):
+                        # 提交成功后重置状态
+                        st.session_state['show_feedback_after_generate'] = False
+                        del st.session_state['recently_generated_record_id']
+                        st.rerun()
+            except:
+                pass
     
         st.markdown("---")
         if st.button("重新开始新流程", type="secondary", key="reset_workflow"):
@@ -417,8 +508,8 @@ if page == "生成测试用例":
 elif page == "历史记录":
     st.title("📚 历史记录")
     
-    # 创建两个选项卡
-    tab1, tab2 = st.tabs(["📋 测试用例生成记录", "💬 智能问答记录"])
+    # 创建三个选项卡
+    tab1, tab2, tab3 = st.tabs(["📋 测试用例生成记录", "💬 智能问答记录", "⭐ 测试用例反馈"])
     
     # 选项卡1：测试用例生成记录
     with tab1:
@@ -433,10 +524,9 @@ elif page == "历史记录":
         if not records:
             st.info("暂无测试用例生成记录")
         else:
-            # 简化显示，只显示关键信息和下载按钮
             for record in records:
                 with st.container():
-                    col1, col2, col3 = st.columns([3, 1, 1])
+                    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
                     
                     with col1:
                         # 显示基本信息
@@ -451,25 +541,25 @@ elif page == "历史记录":
                             st.warning("⚠️ 测试用例文件不存在")
                     
                     with col2:
-                        # 下载原始文件按钮（如果存在）
+                        # 下载原始文件按钮
                         original_exists = os.path.exists(record['file_path']) if record.get('file_path') else False
                         if original_exists:
                             with open(record['file_path'], "rb") as f:
                                 st.download_button(
-                                    label="📥 下载需求文档",
+                                    label="📥 需求文档",
                                     data=f,
                                     file_name=record['original_filename'],
                                     key=f"dl_original_{record['id']}"
                                 )
                         else:
-                            st.warning("⚠️ 原始文件不存在")
+                            st.warning("⚠️ 文件不存在")
                     
                     with col3:
-                        # 下载测试用例文件按钮（如果存在）
+                        # 下载测试用例文件按钮
                         if output_exists:
                             with open(record['output_path'], "rb") as f:
                                 st.download_button(
-                                    label="📥 下载测试用例",
+                                    label="📥 测试用例",
                                     data=f,
                                     file_name=record['output_filename'],
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -477,6 +567,26 @@ elif page == "历史记录":
                                 )
                         else:
                             st.warning("无法下载")
+                    
+                    with col4:
+                        # 反馈按钮
+                        feedback_key = f"feedback_{record['id']}"
+                        if st.button("⭐ 反馈", key=feedback_key):
+                            # 在会话状态中标记需要显示反馈表单的记录
+                            st.session_state[f"show_feedback_{record['id']}"] = True
+                            st.rerun()
+                    
+                    # 如果点击了反馈按钮，显示反馈表单
+                    if st.session_state.get(f"show_feedback_{record['id']}", False):
+                        with st.expander("📝 提供反馈", expanded=True):
+                            if show_feedback_form(
+                                record_id=record['id'],
+                                original_filename=record['original_filename'],
+                                output_filename=record['output_filename']
+                            ):
+                                # 提交成功后重置状态
+                                st.session_state[f"show_feedback_{record['id']}"] = False
+                                st.rerun()
                     
                     st.divider()
     
@@ -544,6 +654,164 @@ elif page == "历史记录":
                                 st.rerun()
                             else:
                                 st.error("删除失败")
+                    
+                    st.divider()
+    
+    # 选项卡3：测试用例反馈
+    with tab3:
+        st.header("⭐ 测试用例反馈记录")
+        
+        # 导出功能部分
+        st.markdown("---")
+        st.subheader("📊 导出反馈数据")
+        
+        # 日期范围选择
+        col_date1, col_date2 = st.columns(2)
+        with col_date1:
+            start_date = st.date_input("开始日期", value=datetime.now() - timedelta(days=30))
+        with col_date2:
+            end_date = st.date_input("结束日期", value=datetime.now())
+        
+        # 导出按钮
+        col_export1, col_export2 = st.columns([1, 3])
+        with col_export1:
+            export_clicked = st.button("导出反馈数据", type="primary")
+        
+        # 导出功能实现
+        if export_clicked:
+            if not start_date or not end_date:
+                st.warning("请选择开始日期和结束日期")
+            elif start_date > end_date:
+                st.warning("开始日期不能晚于结束日期")
+            else:
+                try:
+                    # 获取日期范围内的反馈数据
+                    feedback_data = st.session_state.db.get_feedback_by_date_range(
+                        start_date.strftime('%Y-%m-%d'),
+                        end_date.strftime('%Y-%m-%d')
+                    )
+                    
+                    if not feedback_data:
+                        st.info(f"在 {start_date} 到 {end_date} 期间没有反馈记录")
+                    else:
+                        # 将数据转换为DataFrame
+                        export_records = []
+                        for feedback in feedback_data:
+                            export_record = {
+                                "需求文档名称": feedback.get('requirement_doc', '未知'),
+                                "测试用例文件": feedback.get('testcase_file', '未知'),
+                                "生成人": feedback.get('generator_name', '未填写'),
+                                "采用率": f"{feedback.get('adoption_rate', 0)}%",
+                                "节约时间(小时)": feedback.get('time_saved_hours', 0),
+                                "问题反馈": feedback.get('problem_feedback', ''),
+                                "反馈时间": feedback.get('created_at', ''),
+                                "测试用例生成时间": feedback.get('record_created_at', '')
+                            }
+                            export_records.append(export_record)
+                        
+                        # 创建DataFrame
+                        df = pd.DataFrame(export_records)
+                        
+                        # 显示统计信息
+                        total_records = len(export_records)
+                        total_time_saved = sum([f.get('time_saved_hours', 0) for f in feedback_data])
+                        avg_adoption_rate = sum([f.get('adoption_rate', 0) for f in feedback_data]) / max(1, total_records)
+                        
+                        st.success(f"找到 {total_records} 条反馈记录")
+                        col_stat1, col_stat2 = st.columns(2)
+                        with col_stat1:
+                            st.metric("总节约时间", f"{total_time_saved:.1f} 小时")
+                        with col_stat2:
+                            st.metric("平均采用率", f"{avg_adoption_rate:.1f}%")
+                        
+                        # 显示数据预览
+                        st.dataframe(df, use_container_width=True)
+                        
+                        # 生成Excel文件
+                        excel_buffer = io.BytesIO()
+                        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                            # 写入主数据
+                            df.to_excel(writer, sheet_name='反馈记录', index=False)
+                            
+                            # 写入统计信息
+                            stats_data = [
+                                ["统计项", "数值"],
+                                ["总记录数", total_records],
+                                ["总节约时间(小时)", total_time_saved],
+                                ["平均采用率(%)", avg_adoption_rate],
+                                ["导出时间", datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+                                ["日期范围", f"{start_date} 至 {end_date}"]
+                            ]
+                            stats_df = pd.DataFrame(stats_data)
+                            stats_df.to_excel(writer, sheet_name='统计信息', index=False, header=False)
+                        
+                        excel_buffer.seek(0)
+                        
+                        # 下载按钮
+                        filename = f"测试用例反馈_{start_date}_{end_date}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                        st.download_button(
+                            label="📥 下载Excel文件",
+                            data=excel_buffer,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                        
+                except Exception as e:
+                    st.error(f"导出失败: {str(e)}")
+                    st.text(traceback.format_exc())
+        
+        st.markdown("---")
+        
+        try:
+            feedback_records = st.session_state.db.get_all_feedback()
+        except Exception as feedback_error:
+            st.error(f"加载反馈记录失败: {str(feedback_error)}")
+            feedback_records = []
+        
+        if not feedback_records:
+            st.info("暂无反馈记录")
+        else:
+            # 显示统计信息
+            total_feedback = len(feedback_records)
+            avg_adoption_rate = sum([f.get('adoption_rate', 0) for f in feedback_records]) / max(1, total_feedback)
+            total_time_saved = sum([f.get('time_saved_hours', 0) for f in feedback_records])
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("总反馈数", total_feedback)
+            with col2:
+                st.metric("平均采用率", f"{avg_adoption_rate:.1f}%")
+            with col3:
+                st.metric("总节约时间", f"{total_time_saved:.1f} 小时")
+            
+            st.markdown("---")
+            
+            # 显示详细的反馈记录
+            for feedback in feedback_records:
+                with st.container():
+                    # 基本信息
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    with col1:
+                        st.write(f"**📅 反馈时间:** {feedback['created_at']}")
+                        if feedback.get('requirement_doc'):
+                            st.write(f"**📄 需求文档:** {feedback['requirement_doc']}")
+                        if feedback.get('testcase_file'):
+                            st.write(f"**📊 测试用例:** {feedback['testcase_file']}")
+                    with col2:
+                        st.write(f"**👤 生成人:** {feedback.get('generator_name', '未填写')}")
+                    with col3:
+                        # 采用率显示
+                        adoption_rate = feedback.get('adoption_rate', 0)
+                        color = "green" if adoption_rate >= 80 else "orange" if adoption_rate >= 50 else "red"
+                        st.markdown(f"**采用率:** <span style='color:{color}'>{adoption_rate}%</span>", 
+                                  unsafe_allow_html=True)
+                        st.write(f"**⏱️ 节约时间:** {feedback.get('time_saved_hours', 0)} 小时")
+                    
+                    # 问题反馈
+                    problem_feedback = feedback.get('problem_feedback', '')
+                    if problem_feedback:
+                        with st.expander("📝 查看问题反馈"):
+                            st.info(problem_feedback)
                     
                     st.divider()
 
