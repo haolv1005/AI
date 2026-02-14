@@ -1,9 +1,5 @@
-streamlit
-python-docx
-PyPDF2
-openai
-pandas
-sqlalchemy
-langchain
-faiss-cpu
-text2vec
+# requirements_api.txt
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+python-multipart==0.0.6

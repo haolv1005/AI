@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.5, user-scalable=yes">
+    <title>AI测试用例生成系统 · Streamlit 风格</title>
+    <!-- 使用国内镜像备份，提高稳定性 -->
+    <link href="https://cdn.bootcdn.net/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.bootcdn.net/ajax/libs/marked/4.0.2/marked.min.js"></script>
+    <style>
+        .sidebar { transition: transform 0.3s ease; }
+        .sidebar-hidden { transform: translateX(-100%); }
+        .step-circle { transition: all 0.2s; }
+        .modal { transition: opacity 0.2s, visibility 0.2s; }
+        .st-card { background-color: white; border-radius: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid #f0f0f0; padding: 1.25rem; }
+        .st-metric { background-color: #f9fafb; border-radius: 0.5rem; padding: 0.75rem; text-align: center; }
+        .prose pre { background-color: #f3f4f6; padding: 0.75rem; border-radius: 0.5rem; overflow-x: auto; }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans antialiased">
+
+    <!-- 全局加载遮罩 -->
+    <div id="globalLoading" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-5 rounded-xl shadow-xl flex items-center space-x-3">
+            <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <span class="text-gray-700">处理中...</span>
+        </div>
+    </div>
+
+    <!-- 会话ID隐藏域 -->
+    <input type="hidden" id="sessionId" value="">
+
+    <!-- 侧边栏 / 移动端抽屉 -->
+    <div class="relative min-h-screen flex flex-col md:flex-row">
+        <aside id="sidebar" class="sidebar w-full md:w-64 bg-white border-r border-gray-200 p-4 md:min-h-screen md:fixed md:left-0 md:top-0 z-20 md:transform-none transition-transform duration-200 ease-in-out">
+            <div class="flex items-center justify-between md:justify-start mb-8">
+                <div class="flex items-center space-x-2">
+                    <i class="fas fa-flask text-2xl text-blue-500"></i>
+                    <span class="text-xl font-bold text-gray-800">AI测试用例</span>
+                </div>
+                <button id="closeSidebarBtn" class="md:hidden text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="mb-6 p-3 bg-gray-50 rounded-lg">
+                <div class="text-xs text-gray-500 mb-1">当前会话</div>
+                <div id="sessionBadge" class="text-sm font-mono truncate text-gray-700">未创建</div>
+                <button id="createSessionBtnSidebar" class="mt-2 w-full bg-blue-500 text-white text-sm py-1.5 rounded-md hover:bg-blue-600">
+                    <i class="fas fa-plus-circle mr-1"></i>新会话
+                </button>
+            </div>
+            <nav class="space-y-1">
+                <button id="navGenerate" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg flex items-center space-x-3 hover:bg-gray-100 transition">
+                    <i class="fas fa-file-alt w-5 text-gray-500"></i><span>生成测试用例</span>
+                </button>
+                <button id="navHistory" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg flex items-center space-x-3 hover:bg-gray-100 transition">
+                    <i class="fas fa-history w-5 text-gray-500"></i><span>历史记录</span>
+                </button>
+                <button id="navKnowledge" class="nav-btn w-full text-left px-4 py-2.5 rounded-lg flex items-center space-x-3 hover:bg-gray-100 transition">
+                    <i class="fas fa-database w-5 text-gray-500"></i><span>知识库管理</span>
+                </button>
+            </nav>
+            <div class="absolute bottom-4 left-4 right-4 text-xs text-gray-400">API v2.1 · 本地模型</div>
+        </aside>
+
+        <!-- 移动端顶部导航栏 -->
+        <div class="md:hidden bg-white border-b sticky top-0 z-10 p-3 flex items-center justify-between">
+            <button id="openSidebarBtn" class="text-gray-600"><i class="fas fa-bars text-xl"></i></button>
+            <div class="flex items-center space-x-2"><i class="fas fa-flask text-blue-500"></i><span class="font-semibold">AI测试用例</span></div>
+            <div class="w-6"></div>
+        </div>
+
+        <!-- 主内容区域 -->
+        <main id="mainContent" class="flex-1 md:ml-64 p-4 md:p-6 lg:p-8 bg-gray-50 min-h-screen"></main>
+    </div>
+
+    <!-- 模态框 -->
+    <div id="modalOverlay" class="modal fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 invisible opacity-0">
+        <div id="modalContent" class="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6"></div>
+    </div>
+
+    <script>
+        // ---------- 全局配置 ----------
+        // 使用空字符串表示同源（即当前IP:端口），便于局域网部署
+        const API_BASE = '';
+        let sessionId = localStorage.getItem('sessionId') || '';
+        let currentPage = 'generate';
+
+        function showLoading() { document.getElementById('globalLoading').classList.remove('hidden'); }
+        function hideLoading() { document.getElementById('globalLoading').classList.add('hidden'); }
+
+        function updateSessionBadge() {
+            const badge = document.getElementById('sessionBadge');
+            badge.innerText = sessionId ? sessionId.slice(0,12) + '...' : '无会话';
+        }
+        updateSessionBadge();
+
+        // 普通 API 请求（无超时）
+        async function apiFetch(url, options = {}) {
+            showLoading();
+            try {
+                const res = await fetch(url, options);
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error(`HTTP ${res.status}: ${errText.slice(0,100)}`);
+                }
+                return await res.json();
+            } catch (e) {
+                console.error(e);
+                alert('请求失败: ' + e.message);
+                throw e;
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function openModal(htmlContent) {
+            document.getElementById('modalContent').innerHTML = htmlContent;
+            document.getElementById('modalOverlay').classList.remove('invisible', 'opacity-0');
+        }
+        function closeModal() {
+            document.getElementById('modalOverlay').classList.add('invisible', 'opacity-0');
+        }
+        document.getElementById('modalOverlay').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+
+        async function createNewSession() {
+            try {
+                const data = await apiFetch(`${API_BASE}/sessions`, { method: 'POST' });
+                sessionId = data.session_id;
+                localStorage.setItem('sessionId', sessionId);
+                document.getElementById('sessionId').value = sessionId;
+                updateSessionBadge();
+                alert('新会话已创建');
+                if (currentPage === 'generate') resetGenerateSteps();
+            } catch { alert('创建会话失败'); }
+        }
+
+        document.getElementById('openSidebarBtn')?.addEventListener('click', () => document.getElementById('sidebar').classList.remove('sidebar-hidden'));
+        document.getElementById('closeSidebarBtn')?.addEventListener('click', () => document.getElementById('sidebar').classList.add('sidebar-hidden'));
+
+        function initNavigation() {
+            const navs = { navGenerate: 'generate', navHistory: 'history', navKnowledge: 'knowledge' };
+            for (const [btnId, page] of Object.entries(navs)) {
+                const btn = document.getElementById(btnId);
+                if (btn) {
+                    btn.addEventListener('click', function() {
+                        showPage(page);
+                        if (window.innerWidth < 768) document.getElementById('sidebar').classList.add('sidebar-hidden');
+                        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-gray-100', 'text-blue-600'));
+                        this.classList.add('bg-gray-100', 'text-blue-600');
+                    });
+                }
+            }
+            document.getElementById('navGenerate')?.classList.add('bg-gray-100', 'text-blue-600');
+        }
+        document.getElementById('createSessionBtnSidebar')?.addEventListener('click', createNewSession);
+
+        function showPage(page) {
+            currentPage = page;
+            const main = document.getElementById('mainContent');
+            if (page === 'generate') { main.innerHTML = renderGeneratePage(); initGenerateEvents(); }
+            else if (page === 'history') { main.innerHTML = renderHistoryPage(); initHistoryEvents(); }
+            else if (page === 'knowledge') { main.innerHTML = renderKnowledgePage(); initKnowledgeEvents(); }
+        }
+
+        // ========== 生成页面 ==========
+        function renderGeneratePage() {
+            return `
+                <div class="max-w-5xl mx-auto">
+                    <h2 class="text-2xl font-bold mb-6 flex items-center"><i class="fas fa-file-alt text-blue-500 mr-3"></i>生成测试用例</h2>
+                    <div class="bg-white st-card p-5 mb-6">
+                        <div class="flex items-center justify-between">
+                            <div class="flex flex-col items-center"><div id="step1Circle" class="step-circle w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center font-bold">1</div><span class="text-xs mt-1">需求分析</span></div>
+                            <div class="flex-1 h-1 mx-2 bg-gray-200"></div>
+                            <div class="flex flex-col items-center"><div id="step2Circle" class="step-circle w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center font-bold">2</div><span class="text-xs mt-1">测试点</span></div>
+                            <div class="flex-1 h-1 mx-2 bg-gray-200"></div>
+                            <div class="flex flex-col items-center"><div id="step3Circle" class="step-circle w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center font-bold">3</div><span class="text-xs mt-1">测试用例</span></div>
+                            <div class="flex-1 h-1 mx-2 bg-gray-200"></div>
+                            <div class="flex flex-col items-center"><div id="step4Circle" class="step-circle w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center font-bold">4</div><span class="text-xs mt-1">导出</span></div>
+                        </div>
+                    </div>
+                    <div id="uploadCard" class="st-card mb-6">
+                        <div class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-400 transition cursor-pointer" id="uploadArea">
+                            <i class="fas fa-cloud-upload-alt text-5xl text-gray-400 mb-4"></i>
+                            <p class="text-gray-700 text-lg">点击或拖拽上传需求文档</p>
+                            <p class="text-sm text-gray-500 mt-1">支持 .docx, .pdf</p>
+                            <input type="file" id="docFile" accept=".docx,.pdf" class="hidden">
+                            <button id="selectFileBtn" class="mt-4 bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 text-sm">选择文件</button>
+                        </div>
+                    </div>
+                    <div id="stepCard" class="st-card hidden">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 id="stepTitle" class="text-lg font-semibold"></h3>
+                            <div class="space-x-2">
+                                <button id="regenerateBtn" class="border px-3 py-1.5 rounded-md text-sm hover:bg-gray-50"><i class="fas fa-sync-alt mr-1"></i>重新生成</button>
+                                <button id="confirmStepBtn" class="bg-green-500 text-white px-4 py-1.5 rounded-md text-sm hover:bg-green-600">确认并继续 <i class="fas fa-arrow-right ml-1"></i></button>
+                            </div>
+                        </div>
+                        <textarea id="stepEditor" rows="12" class="w-full border rounded-lg p-3 font-mono text-sm bg-gray-50 focus:bg-white"></textarea>
+                    </div>
+                    <div id="exportCard" class="st-card hidden mt-6">
+                        <div class="flex items-center justify-between">
+                            <div><span class="font-medium">测试用例已生成</span><span id="testCaseStats" class="ml-3 text-sm text-gray-600"></span></div>
+                            <div class="flex space-x-3">
+                                <button id="exportExcelBtn" class="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 flex items-center"><i class="fas fa-file-excel mr-2"></i>导出 Excel</button>
+                                <button id="resetWorkflowBtn" class="bg-gray-500 text-white px-5 py-2 rounded-lg hover:bg-gray-600 flex items-center"><i class="fas fa-redo-alt mr-2"></i>重新开始</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function resetGenerateSteps() {
+            ['step1Circle','step2Circle','step3Circle','step4Circle'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.className = 'step-circle w-10 h-10 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center font-bold';
+            });
+            document.getElementById('uploadCard')?.classList.remove('hidden');
+            document.getElementById('stepCard')?.classList.add('hidden');
+            document.getElementById('exportCard')?.classList.add('hidden');
+            if (sessionId) {
+                try {
+                    await apiFetch(`${API_BASE}/sessions/${sessionId}/data`, { method: 'DELETE' });
+                } catch (e) {
+                    console.warn('清空会话数据失败', e);
+                }
+            }
+            const fileInput = document.getElementById('docFile');
+            if (fileInput) fileInput.value = '';
+        }
+
+        function initGenerateEvents() {
+            const selectBtn = document.getElementById('selectFileBtn');
+            const fileInput = document.getElementById('docFile');
+            if (selectBtn) selectBtn.addEventListener('click', () => fileInput.click());
+            if (fileInput) fileInput.addEventListener('change', handleFileUpload);
+            resetGenerateSteps();
+        }
+
+        async function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            if (!sessionId) await createNewSession();
+            const formData = new FormData();
+            formData.append('file', file);
+            let url = `${API_BASE}/upload/document`;
+            if (sessionId) url += `?session_id=${sessionId}`;
+            try {
+                showLoading();
+                const res = await fetch(url, { method: 'POST', body: formData });
+                const data = await res.json();
+                sessionId = data.session_id;
+                localStorage.setItem('sessionId', sessionId);
+                document.getElementById('sessionId').value = sessionId;
+                updateSessionBadge();
+                await runStep('summary');
+            } catch (err) {
+                alert('上传失败: ' + err.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function runStep(step) {
+            try {
+                const data = await apiFetch(`${API_BASE}/generate/sync`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId, step: step })
+                });
+                if (data.status === 'success') {
+                    if (step === 'summary') document.getElementById('step1Circle').className = 'step-circle w-10 h-10 rounded-full bg-green-500 text-white flex items-center justify-center font-bold';
+                    else if (step === 'test_points') document.getElementById('step2Circle').className = 'step-circle w-10 h-10 rounded-full bg-green-500 text-white flex items-center justify-center font-bold';
+                    else if (step === 'test_cases') {
+                        document.getElementById('step3Circle').className = 'step-circle w-10 h-10 rounded-full bg-green-500 text-white flex items-center justify-center font-bold';
+                        const statsEl = document.getElementById('testCaseStats');
+                        if (statsEl && data.result) {
+                            const match = data.result.match(/TC-\w+/g);
+                            statsEl.innerText = `共生成 ${match ? match.length : '?'} 个测试用例`;
+                        }
+                    }
+                    document.getElementById('uploadCard').classList.add('hidden');
+                    document.getElementById('stepCard').classList.remove('hidden');
+                    const titleMap = { 'summary': '📋 需求文档分析报告（可编辑）', 'test_points': '🔍 详细测试点（可编辑）', 'test_cases': '🤖 智能问答测试用例（可编辑）' };
+                    document.getElementById('stepTitle').innerText = titleMap[step] || step;
+                    document.getElementById('stepEditor').value = data.result || '无返回内容';
+                    window[`current_${step}`] = data.result;
+
+                    document.getElementById('confirmStepBtn').onclick = function() {
+                        const edited = document.getElementById('stepEditor').value;
+                        if (step === 'summary') { window.current_summary = edited; runStep('test_points'); }
+                        else if (step === 'test_points') { window.current_test_points = edited; runStep('test_cases'); }
+                        else if (step === 'test_cases') {
+                            window.current_test_cases = edited;
+                            document.getElementById('step4Circle').className = 'step-circle w-10 h-10 rounded-full bg-green-500 text-white flex items-center justify-center font-bold';
+                            document.getElementById('exportCard').classList.remove('hidden');
+                        }
+                    };
+                    document.getElementById('regenerateBtn').onclick = () => runStep(step);
+                } else {
+                    alert('生成失败: ' + (data.error || '未知错误'));
+                }
+            } catch { alert('执行步骤失败'); }
+        }
+
+        document.addEventListener('click', function(e) {
+            if (e.target.id === 'exportExcelBtn' || e.target.closest('#exportExcelBtn')) {
+                if (!sessionId) return alert('无会话');
+                window.open(`${API_BASE}/export/excel?session_id=${sessionId}`, '_blank');
+                alert('Excel 已生成，请至历史记录页面提交反馈');
+            }
+            if (e.target.id === 'resetWorkflowBtn' || e.target.closest('#resetWorkflowBtn')) {
+                resetGenerateSteps();
+            }
+        });
+
+        // ========== 历史记录页面 ==========
+        function renderHistoryPage() {
+            return `
+                <div class="max-w-6xl mx-auto">
+                    <h2 class="text-2xl font-bold mb-6 flex items-center"><i class="fas fa-history text-blue-500 mr-3"></i>历史记录</h2>
+                    <div class="border-b border-gray-200 mb-4">
+                        <div class="flex space-x-6">
+                            <button id="tabRecords" class="tab-btn py-2 px-1 border-b-2 border-blue-500 text-blue-600 font-medium">测试用例生成记录</button>
+                            <button id="tabQA" class="tab-btn py-2 px-1 border-b-2 border-transparent text-gray-500 hover:text-gray-700">智能问答记录</button>
+                            <button id="tabFeedback" class="tab-btn py-2 px-1 border-b-2 border-transparent text-gray-500 hover:text-gray-700">测试用例反馈</button>
+                        </div>
+                    </div>
+                    <div id="tabContent" class="st-card"></div>
+                </div>
+            `;
+        }
+
+        function initHistoryEvents() {
+            loadTabContent('records');
+            document.getElementById('tabRecords').addEventListener('click', () => loadTabContent('records'));
+            document.getElementById('tabQA').addEventListener('click', () => loadTabContent('qa'));
+            document.getElementById('tabFeedback').addEventListener('click', () => loadTabContent('feedback'));
+        }
+
+        async function loadTabContent(tab) {
+            const container = document.getElementById('tabContent');
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('border-blue-500', 'text-blue-600');
+                btn.classList.add('border-transparent', 'text-gray-500');
+            });
+            if (tab === 'records') {
+                document.getElementById('tabRecords').classList.add('border-blue-500', 'text-blue-600');
+                container.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-pulse mr-2"></i>加载中...</div>';
+                await loadRecordsTab(container);
+            } else if (tab === 'qa') {
+                document.getElementById('tabQA').classList.add('border-blue-500', 'text-blue-600');
+                container.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-pulse mr-2"></i>加载中...</div>';
+                await loadQATab(container);
+            } else if (tab === 'feedback') {
+                document.getElementById('tabFeedback').classList.add('border-blue-500', 'text-blue-600');
+                container.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-pulse mr-2"></i>加载中...</div>';
+                await loadFeedbackTab(container);
+            }
+        }
+
+        async function loadRecordsTab(container) {
+            try {
+                const records = await apiFetch(`${API_BASE}/records`);
+                if (!records || records.length === 0) {
+                    container.innerHTML = '<div class="text-center py-10 text-gray-500">暂无生成记录</div>';
+                    return;
+                }
+                let html = '<div class="space-y-4">';
+                records.forEach(rec => {
+                    html += `
+                        <div class="border rounded-lg p-4 hover:shadow-md transition">
+                            <div class="flex flex-wrap justify-between items-center">
+                                <div>
+                                    <div class="font-medium">${rec.original_filename || '未知文档'}</div>
+                                    <div class="text-sm text-gray-500 mt-1">生成时间: ${rec.created_at}</div>
+                                    <div class="text-xs text-gray-400 mt-1">用例文件: ${rec.output_filename || '未生成'}</div>
+                                </div>
+                                <div class="flex space-x-2 mt-2 sm:mt-0">
+                                    <button onclick="viewRecordDetail(${rec.id})" class="text-blue-600 hover:text-blue-800 text-sm border px-3 py-1 rounded">
+                                        <i class="fas fa-eye mr-1"></i>详情
+                                    </button>
+                                    <button onclick="openFeedbackModal(${rec.id}, '${rec.original_filename}', '${rec.output_filename}')" class="text-green-600 hover:text-green-800 text-sm border px-3 py-1 rounded">
+                                        <i class="fas fa-star mr-1"></i>反馈
+                                    </button>
+                                    <a href="${API_BASE}/records/${rec.id}/export" class="text-gray-600 hover:text-gray-800 text-sm border px-3 py-1 rounded">
+                                        <i class="fas fa-download mr-1"></i>下载
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                container.innerHTML = html;
+            } catch (e) {
+                container.innerHTML = '<div class="text-red-500">加载失败</div>';
+            }
+        }
+
+        window.viewRecordDetail = async function(id) {
+            try {
+                const rec = await apiFetch(`${API_BASE}/records/${id}`);
+                const html = `
+                    <h3 class="text-xl font-bold mb-4">记录详情</h3>
+                    <div class="space-y-3">
+                        <p><span class="font-medium">需求文档:</span> ${rec.original_filename}</p>
+                        <p><span class="font-medium">生成时间:</span> ${rec.created_at}</p>
+                        <p><span class="font-medium">用例文件:</span> ${rec.output_filename}</p>
+                        <p><span class="font-medium">需求分析摘要:</span> <pre class="bg-gray-50 p-2 rounded text-sm mt-1 max-h-60 overflow-auto">${rec.summary || '无'}</pre></p>
+                        <p><span class="font-medium">测试点:</span> <pre class="bg-gray-50 p-2 rounded text-sm mt-1 max-h-60 overflow-auto">${rec.requirement_analysis || '无'}</pre></p>
+                    </div>
+                    <div class="mt-6 flex justify-end"><button onclick="closeModal()" class="bg-gray-200 px-4 py-2 rounded-lg hover:bg-gray-300">关闭</button></div>
+                `;
+                openModal(html);
+            } catch { alert('获取详情失败'); }
+        };
+
+        window.openFeedbackModal = function(recordId, filename, outputName) {
+            const html = `
+                <h3 class="text-xl font-bold mb-4">📝 测试用例反馈</h3>
+                <div class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div class="bg-gray-50 p-3 rounded">📄 需求文档: ${filename}</div>
+                        <div class="bg-gray-50 p-3 rounded">📊 测试用例: ${outputName || '未命名'}</div>
+                    </div>
+                    <div><label class="block text-sm font-medium mb-1">生成人</label><input type="text" id="feedbackGenerator" placeholder="请输入您的姓名" class="w-full border rounded-lg p-2"></div>
+                    <div><label class="block text-sm font-medium mb-1">采用率 (%)</label><input type="range" id="feedbackRate" min="0" max="100" value="80" class="w-full" oninput="this.nextElementSibling.innerText = this.value + '%'"><span class="text-sm text-gray-600 ml-2">80%</span></div>
+                    <div><label class="block text-sm font-medium mb-1">节约时间 (小时)</label><input type="number" id="feedbackHours" min="0" step="0.5" value="2.0" class="w-full border rounded-lg p-2"></div>
+                    <div><label class="block text-sm font-medium mb-1">问题反馈</label><textarea id="feedbackProblem" rows="4" placeholder="请描述遇到的问题或改进建议..." class="w-full border rounded-lg p-2"></textarea></div>
+                    <div class="flex justify-end space-x-3 mt-4">
+                        <button onclick="closeModal()" class="border px-4 py-2 rounded-lg hover:bg-gray-50">取消</button>
+                        <button onclick="submitFeedback(${recordId})" class="bg-blue-500 text-white px-5 py-2 rounded-lg hover:bg-blue-600">提交反馈</button>
+                    </div>
+                </div>
+            `;
+            openModal(html);
+            setTimeout(() => {
+                const rateInput = document.getElementById('feedbackRate');
+                if (rateInput) rateInput.addEventListener('input', function() { this.nextElementSibling.innerText = this.value + '%'; });
+            }, 100);
+        };
+
+        window.submitFeedback = async function(recordId) {
+            const name = document.getElementById('feedbackGenerator')?.value.trim();
+            if (!name) return alert('请填写生成人姓名');
+            const rate = parseInt(document.getElementById('feedbackRate')?.value || 0);
+            const hours = parseFloat(document.getElementById('feedbackHours')?.value || 0);
+            const problem = document.getElementById('feedbackProblem')?.value || '';
+            try {
+                await apiFetch(`${API_BASE}/feedback`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ record_id: recordId, generator_name: name, adoption_rate: rate, time_saved_hours: hours, problem_feedback: problem })
+                });
+                alert('反馈提交成功');
+                closeModal();
+            } catch { alert('提交失败'); }
+        };
+
+        async function loadQATab(container) {
+            try {
+                const records = await apiFetch(`${API_BASE}/qa/history?limit=50`);
+                if (!records || records.length === 0) {
+                    container.innerHTML = '<div class="text-center py-10 text-gray-500">暂无问答记录</div>';
+                    return;
+                }
+                let html = '<div class="space-y-4">';
+                records.forEach(qa => {
+                    html += `
+                        <div class="border rounded-lg p-4">
+                            <div class="flex justify-between">
+                                <span class="text-xs text-gray-500">${qa.created_at}</span>
+                                <button onclick="deleteQARecord(${qa.id})" class="text-red-500 hover:text-red-700 text-sm"><i class="fas fa-trash-alt"></i></button>
+                            </div>
+                            <div class="mt-2 font-medium">❓ ${qa.question}</div>
+                            <div class="mt-2 text-sm text-gray-700 prose max-w-none">${marked.parse(qa.answer.substring(0,200))}...</div>
+                            <div class="mt-2 text-xs text-gray-400">参考文档数: ${qa.reference_count || 0}</div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                container.innerHTML = html;
+            } catch { container.innerHTML = '<div class="text-red-500">加载失败</div>'; }
+        }
+
+        window.deleteQARecord = async function(id) {
+            if (!confirm('确定删除该问答记录？')) return;
+            try {
+                await apiFetch(`${API_BASE}/qa/history/${id}`, { method: 'DELETE' });
+                loadTabContent('qa');
+            } catch { alert('删除失败'); }
+        };
+
+        async function loadFeedbackTab(container) {
+            try {
+                const feedbacks = await apiFetch(`${API_BASE}/feedback`);
+                if (!feedbacks || feedbacks.length === 0) {
+                    container.innerHTML = `<div class="text-center py-10 text-gray-500">暂无反馈记录</div><div class="mt-4 flex justify-end"><button id="exportFeedbackBtn" class="bg-indigo-500 text-white px-4 py-2 rounded-lg hover:bg-indigo-600"><i class="fas fa-download mr-1"></i>导出反馈</button></div>`;
+                    attachExportFeedback();
+                    return;
+                }
+                const total = feedbacks.length;
+                const avgRate = (feedbacks.reduce((s, f) => s + (f.adoption_rate || 0), 0) / total).toFixed(1);
+                const totalHours = feedbacks.reduce((s, f) => s + (f.time_saved_hours || 0), 0).toFixed(1);
+                let html = `<div class="grid grid-cols-3 gap-4 mb-6"><div class="st-metric"><div class="text-2xl font-bold">${total}</div><div class="text-xs text-gray-500">总反馈数</div></div><div class="st-metric"><div class="text-2xl font-bold">${avgRate}%</div><div class="text-xs text-gray-500">平均采用率</div></div><div class="st-metric"><div class="text-2xl font-bold">${totalHours}h</div><div class="text-xs text-gray-500">总节约时间</div></div></div><div class="space-y-3 max-h-96 overflow-y-auto">`;
+                feedbacks.forEach(f => {
+                    html += `<div class="border rounded-lg p-3 text-sm"><div class="flex justify-between"><span class="font-medium">${f.requirement_doc || '未知文档'}</span><span class="text-gray-500">${f.created_at}</span></div><div class="mt-2 grid grid-cols-3 gap-2 text-xs"><span>生成人: ${f.generator_name || '未填'}</span><span>采用率: <span class="font-bold ${f.adoption_rate >= 80 ? 'text-green-600' : f.adoption_rate >= 50 ? 'text-orange-500' : 'text-red-500'}">${f.adoption_rate}%</span></span><span>节约: ${f.time_saved_hours || 0}小时</span></div>${f.problem_feedback ? `<div class="mt-2 p-2 bg-gray-50 rounded text-gray-700">📝 ${f.problem_feedback}</div>` : ''}</div>`;
+                });
+                html += '</div><div class="mt-4 flex justify-end"><button id="exportFeedbackBtn" class="bg-indigo-500 text-white px-4 py-2 rounded-lg hover:bg-indigo-600"><i class="fas fa-download mr-1"></i>导出反馈</button></div>';
+                container.innerHTML = html;
+                attachExportFeedback();
+            } catch { container.innerHTML = '<div class="text-red-500">加载失败</div>'; }
+        }
+
+        function attachExportFeedback() {
+            const btn = document.getElementById('exportFeedbackBtn');
+            if (btn) {
+                btn.addEventListener('click', function() {
+                    const start = prompt('开始日期 (YYYY-MM-DD)', '2026-01-01');
+                    if (!start) return;
+                    const end = prompt('结束日期 (YYYY-MM-DD)', new Date().toISOString().slice(0,10));
+                    if (!end) return;
+                    window.open(`${API_BASE}/feedback/export?start_date=${start}&end_date=${end}`, '_blank');
+                });
+            }
+        }
+
+        // ========== 知识库管理页面 ==========
+        let selectedRefs = [];
+
+        function renderKnowledgePage() {
+            return `
+                <div class="max-w-6xl mx-auto">
+                    <h2 class="text-2xl font-bold mb-6 flex items-center"><i class="fas fa-database text-blue-500 mr-3"></i>知识库管理</h2>
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div class="lg:col-span-1 space-y-6">
+                            <div class="st-card">
+                                <h3 class="font-medium mb-3 flex items-center"><i class="fas fa-upload mr-2 text-gray-500"></i>上传文件</h3>
+                                <input type="file" id="kbFileInput" accept=".xlsx,.xls,.csv,.txt,.docx,.pdf" class="block w-full text-sm border rounded-lg p-2">
+                                <button id="uploadKbBtn" class="mt-3 w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600">上传并索引</button>
+                            </div>
+                            <div class="st-card">
+                                <div class="flex justify-between items-center mb-3"><h3 class="font-medium">文件列表</h3><button id="rebuildIndexBtn" class="text-xs bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600">重建索引</button></div>
+                                <div id="kbFileList" class="space-y-2 max-h-96 overflow-y-auto"><div class="text-center py-4 text-gray-400"><i class="fas fa-spinner fa-pulse"></i> 加载中...</div></div>
+                            </div>
+                        </div>
+                        <div class="lg:col-span-2 space-y-6">
+                            <div class="st-card">
+                                <h3 class="font-medium mb-3 flex items-center"><i class="fas fa-search mr-2 text-gray-500"></i>知识库搜索</h3>
+                                <div class="flex space-x-2"><input type="text" id="searchQuery" placeholder="输入搜索关键词..." class="flex-1 border rounded-lg p-2"><button id="searchBtn" class="bg-gray-200 px-4 py-2 rounded-lg hover:bg-gray-300">搜索</button></div>
+                                <div class="mt-3 flex items-center space-x-3 text-sm">
+                                    <label>结果数量:</label><select id="resultLimit" class="border rounded p-1"><option>5</option><option selected>10</option><option>20</option></select>
+                                    <label>相似度阈值(%):</label><input type="number" id="similarityThreshold" min="0" max="100" value="65" class="w-16 border rounded p-1">
+                                </div>
+                                <div id="searchResultsContainer" class="mt-4 max-h-60 overflow-y-auto border rounded-lg p-2 bg-gray-50"></div>
+                            </div>
+                            <div class="st-card">
+                                <h3 class="font-medium mb-3 flex items-center"><i class="fas fa-robot mr-2 text-gray-500"></i>智能问答</h3>
+                                <textarea id="qaQuestion" rows="3" class="w-full border rounded-lg p-3" placeholder="请输入您的问题..."></textarea>
+                                <div class="flex justify-between items-center mt-3">
+                                    <span id="selectedRefCount" class="text-sm bg-gray-100 px-3 py-1 rounded-full">已选 <span id="selectedCount">0</span> 个参考</span>
+                                    <button id="askBtn" class="bg-green-500 text-white px-5 py-2 rounded-lg hover:bg-green-600"><i class="fas fa-paper-plane mr-1"></i>提问</button>
+                                </div>
+                                <div id="qaAnswer" class="mt-5 p-4 bg-gray-50 rounded-lg prose max-w-none"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function initKnowledgeEvents() {
+            loadKnowledgeFiles();
+            document.getElementById('searchBtn').addEventListener('click', performSearch);
+            document.getElementById('uploadKbBtn').addEventListener('click', uploadKnowledgeFile);
+            document.getElementById('rebuildIndexBtn').addEventListener('click', rebuildIndex);
+            document.getElementById('askBtn').addEventListener('click', askQuestion);
+        }
+
+        async function loadKnowledgeFiles() {
+            try {
+                const files = await apiFetch(`${API_BASE}/knowledge/files`);
+                const container = document.getElementById('kbFileList');
+                if (!files || files.length === 0) { container.innerHTML = '<div class="text-center py-4 text-gray-500">暂无文件</div>'; return; }
+                let html = '';
+                files.forEach(f => {
+                    html += `<div class="flex justify-between items-center p-2 bg-gray-50 rounded-lg"><div class="flex-1 truncate"><span class="text-sm font-medium">${f.filename}</span><span class="text-xs text-gray-500 ml-2">${f.size_str || ''}</span></div><button onclick="deleteKnowledgeFile(${f.id})" class="text-red-500 hover:text-red-700 text-sm ml-2"><i class="fas fa-trash-alt"></i></button></div>`;
+                });
+                container.innerHTML = html;
+            } catch { document.getElementById('kbFileList').innerHTML = '<div class="text-red-500">加载失败</div>'; }
+        }
+
+        window.deleteKnowledgeFile = async function(fileId) {
+            if (!confirm('确定删除该文件及其索引？')) return;
+            try {
+                await apiFetch(`${API_BASE}/knowledge/files/${fileId}`, { method: 'DELETE' });
+                loadKnowledgeFiles();
+            } catch { alert('删除失败'); }
+        };
+
+        async function uploadKnowledgeFile() {
+            const input = document.getElementById('kbFileInput');
+            const file = input.files[0];
+            if (!file) return alert('请选择文件');
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                showLoading();
+                const res = await fetch(`${API_BASE}/knowledge/upload`, { method: 'POST', body: formData });
+                if (res.ok) { alert('上传成功'); input.value = ''; loadKnowledgeFiles(); }
+                else alert('上传失败');
+            } catch { alert('上传失败'); } finally { hideLoading(); }
+        }
+
+        async function rebuildIndex() {
+            try {
+                await apiFetch(`${API_BASE}/knowledge/rebuild`, { method: 'POST' });
+                alert('索引重建完成');
+            } catch { alert('重建失败'); }
+        }
+
+        async function performSearch() {
+            const query = document.getElementById('searchQuery').value.trim();
+            if (!query) return;
+            const limit = document.getElementById('resultLimit').value || 10;
+            const threshold = document.getElementById('similarityThreshold').value || 65;
+            try {
+                const data = await apiFetch(`${API_BASE}/knowledge/search?query=${encodeURIComponent(query)}&limit=${limit}&min_similarity=${threshold}`);
+                const resultsDiv = document.getElementById('searchResultsContainer');
+                if (!data.results || data.results.length === 0) { resultsDiv.innerHTML = '<div class="text-center py-4 text-gray-500">无相关结果</div>'; return; }
+                let html = '<div class="space-y-2">';
+                data.results.forEach(item => {
+                    html += `<div class="p-2 border rounded hover:bg-white"><label class="flex items-start space-x-2"><input type="checkbox" class="mt-1 ref-checkbox" data-content="${encodeURIComponent(item.content)}"><div class="flex-1"><div class="text-xs text-gray-500">相似度: ${item.similarity.toFixed(1)}% | ${item.metadata.source || '未知'}</div><div class="text-sm truncate">${item.content.substring(0,80)}...</div></div></label></div>`;
+                });
+                html += '</div>';
+                resultsDiv.innerHTML = html;
+                selectedRefs = [];
+                document.querySelectorAll('.ref-checkbox').forEach(cb => {
+                    cb.addEventListener('change', function(e) {
+                        const content = decodeURIComponent(this.dataset.content);
+                        if (this.checked) selectedRefs.push(content);
+                        else selectedRefs = selectedRefs.filter(c => c !== content);
+                        document.getElementById('selectedCount').innerText = selectedRefs.length;
+                    });
+                });
+            } catch { alert('搜索失败'); }
+        }
+
+        async function askQuestion() {
+            const question = document.getElementById('qaQuestion').value.trim();
+            if (!question) return alert('请输入问题');
+            const contexts = selectedRefs.length > 0 ? selectedRefs : [];
+            try {
+                const data = await apiFetch(`${API_BASE}/qa/ask`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        question: question,
+                        contexts: contexts,
+                        reference_count: Math.max(1, contexts.length || 10),
+                        session_id: sessionId || undefined
+                    })
+                });
+                document.getElementById('qaAnswer').innerHTML = marked.parse(data.answer);
+            } catch (e) { alert('提问失败'); }
+        }
+
+        window.onload = async function() {
+            try {
+                const health = await fetch(`${API_BASE}/health`).then(r => r.json());
+                if (health.status !== 'healthy') alert('后端服务未就绪，请启动 api_server.py');
+            } catch { alert('无法连接到后端服务，请确认 api_server.py 已运行在8000端口'); }
+            initNavigation();
+            showPage('generate');
+            if (sessionId) { document.getElementById('sessionId').value = sessionId; updateSessionBadge(); }
+        };
+    </script>
+</body>
+</html>
